@@ -26,6 +26,7 @@ All notable changes to the Discord Prayer Bot.
 - **Detailed Behavior Spec**: Created `BOT_BEHAVIOR.md` describing every aspect of the bot's lifecycle.
 
 ### Changed
+- **91st Psalm audio** (issue #69): the Audible intro ("This is Audible") and outro ("Audible hopes you have enjoyed this program") were removed from `media/prayers/The 91st Psalm.mp3`. 2:27.80 -> 2:01.25, no code changes; method in `docs/91st_psalm_audio_trim.md`.
 - Daily-draw channel is no longer a mention-prefix command. Message Content privileged intent is no longer requested (Server Members is still required for the role member list).
 - "Draw your ticket" button uses a persistent view (`timeout=None` + `add_view` on startup) so clicks keep working all day and after restart.
 - Daily-draw loop resolves guilds from stored `daily_draw_config` rows so a runtime channel change is used on the next tick and after restart. `PRAYER_DRAW_CHANNEL_ID` remains seed-only.
