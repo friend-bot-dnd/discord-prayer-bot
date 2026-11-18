@@ -7,6 +7,7 @@ import hashlib
 import logging
 import os
 import subprocess
+import uuid
 from pathlib import Path
 
 import discord
@@ -18,25 +19,38 @@ from db.prayers import get_guild_config
 
 log = logging.getLogger(__name__)
 TTS_DIR = Path("data/tts")
+# edge-tts writes 24 kHz mono MP3 at ~6 kB/s, so anything under this is a stub.
+# Kept low on purpose: a short real phrase must never be thrown away.
+MIN_TTS_BYTES = 2048
 
 
 def _tts_cache_valid(path: Path) -> bool:
-    """A truncated cache file (full disk, killed write) makes FFmpeg fail silently."""
+    """True when FFmpeg can open `path` and read audio out of it.
+
+    Files written by a killed process or a full disk can have a plausible size
+    but no decodable audio; FFmpeg exits non-zero on those, and they never play.
+    This is a cheap prefix check, not a checksum: truncation further into the
+    file is not detectable without a full decode, so new audio is validated in
+    `.part` form before it is renamed into the cache instead.
+    """
     try:
-        if path.stat().st_size < 2048:
+        if path.stat().st_size < MIN_TTS_BYTES:
             return False
     except OSError:
         return False
     try:
         probe = subprocess.run(
             ["ffmpeg", "-v", "error", "-i", str(path), "-t", "0.2", "-f", "null", "-"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            capture_output=True,
             timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
-        return False
-    return probe.returncode == 0
+        # FFmpeg itself is missing or wedged. We cannot judge the file, so keep
+        # it: deleting a good cache entry here would mute every announcement and
+        # re-synthesise it on each message.
+        return True
+    # `-v error` still prints decode errors for files that "open" but are broken.
+    return probe.returncode == 0 and not probe.stderr.strip()
 
 
 class PrayerBotTtsMixin:
@@ -136,14 +150,19 @@ class PrayerBotTtsMixin:
                 log.warning("Discarding unreadable TTS cache file %s", filepath)
                 filepath.unlink(missing_ok=True)
             TTS_DIR.mkdir(parents=True, exist_ok=True)
-            tmp_path = filepath.with_name(filepath.name + ".part")
-            communicate = edge_tts.Communicate(text, voice)
-            await communicate.save(str(tmp_path))
-            if not await asyncio.to_thread(_tts_cache_valid, tmp_path):
+            # Unique per writer: two guilds can synthesise the same text at the
+            # same moment and would otherwise overwrite each other's `.part`.
+            tag = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+            tmp_path = filepath.with_name(f"{filepath.name}.{tag}.part")
+            try:
+                communicate = edge_tts.Communicate(text, voice)
+                await communicate.save(str(tmp_path))
+                if not await asyncio.to_thread(_tts_cache_valid, tmp_path):
+                    log.error("TTS generation produced unreadable audio for guild %s", guild_id)
+                    return
+                os.replace(tmp_path, filepath)
+            finally:
                 tmp_path.unlink(missing_ok=True)
-                log.error("TTS generation produced unreadable audio for guild %s", guild_id)
-                return
-            os.replace(tmp_path, filepath)
         if self._is_prayer_active(guild_id):
             return
         source = self._source_factory(str(filepath), 0, 100)
