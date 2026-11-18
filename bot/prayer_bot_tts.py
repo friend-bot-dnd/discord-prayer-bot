@@ -5,16 +5,38 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+import os
+import subprocess
 from pathlib import Path
 
 import discord
 import edge_tts
 
+from bot.player_framework import build_audio_options
 from bot.state_framework import GuildScopedState
 from db.prayers import get_guild_config
 
 log = logging.getLogger(__name__)
 TTS_DIR = Path("data/tts")
+
+
+def _tts_cache_valid(path: Path) -> bool:
+    """A truncated cache file (full disk, killed write) makes FFmpeg fail silently."""
+    try:
+        if path.stat().st_size < 2048:
+            return False
+    except OSError:
+        return False
+    try:
+        probe = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(path), "-t", "0.2", "-f", "null", "-"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return probe.returncode == 0
 
 
 class PrayerBotTtsMixin:
@@ -109,9 +131,19 @@ class PrayerBotTtsMixin:
         voice = cfg.tts_voice if cfg and cfg.tts_voice else "en-US-GuyNeural"
         cache_key = hashlib.sha1(f"{voice}:{text}".encode()).hexdigest()
         filepath = TTS_DIR / f"tts_{cache_key}.mp3"
-        if not filepath.exists():
+        if not filepath.exists() or not await asyncio.to_thread(_tts_cache_valid, filepath):
+            if filepath.exists():
+                log.warning("Discarding unreadable TTS cache file %s", filepath)
+                filepath.unlink(missing_ok=True)
+            TTS_DIR.mkdir(parents=True, exist_ok=True)
+            tmp_path = filepath.with_name(filepath.name + ".part")
             communicate = edge_tts.Communicate(text, voice)
-            await communicate.save(str(filepath))
+            await communicate.save(str(tmp_path))
+            if not await asyncio.to_thread(_tts_cache_valid, tmp_path):
+                tmp_path.unlink(missing_ok=True)
+                log.error("TTS generation produced unreadable audio for guild %s", guild_id)
+                return
+            os.replace(tmp_path, filepath)
         if self._is_prayer_active(guild_id):
             return
         source = self._source_factory(str(filepath), 0, 100)
@@ -159,12 +191,7 @@ class PrayerBotTtsMixin:
             asyncio.create_task(self._update_all_voice_statuses())
 
     def _source_factory(self, path: str, seek_seconds: float, volume_percent: int):
-        before = ""
-        if seek_seconds > 0:
-            before = f"-ss {seek_seconds:.3f}"
-        options = "-vn -loglevel warning"
-        if volume_percent != 100:
-            options = f"-vn -af volume={volume_percent / 100:.2f} -loglevel warning"
+        before, options = build_audio_options(seek_seconds, volume_percent)
         return discord.FFmpegPCMAudio(path, before_options=before, options=options)
 
     def _get_listening_channel(self, guild_id: str):
