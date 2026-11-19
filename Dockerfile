@@ -19,3 +19,4 @@ RUN useradd -r -u 10001 app && mkdir -p /app/data /app/media && chown -R app /ap
 USER app
 
 EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "dashboard.app:app", "--host", "0.0.0.0", "--port", "8000"]
