@@ -446,3 +446,16 @@ def test_watchdog_finishes_transition_instead_of_restarting() -> None:
     assert restarted == []
     assert conn.can_encrypt is True
     assert [call for call in session.calls if call[0] == "prepare"]
+
+
+def test_dissolved_group_is_not_audible_even_though_it_can_encrypt() -> None:
+    """Measured on a live bot: the room empties, Discord dissolves the MLS group,
+    the session goes pending with epoch 0, and ``can_encrypt`` still says true.
+    Frames sent then decrypt to nothing for whoever joins next."""
+    session = FakeSession(status="pending")
+    session.epoch = 0
+    conn = FakeConn(session)
+    conn.can_encrypt = True
+    vc = SimpleNamespace(_connection=conn, channel=CHANNEL_WITH_LISTENER)
+
+    assert is_audible(vc, [1]) is False

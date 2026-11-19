@@ -19,6 +19,7 @@ from bot.prayer_session import (
     session_expected_seconds,
     session_plan,
 )
+from bot.prayer_time import next_occurrence
 from bot.state_framework import GuildScopedState
 from bot.voice_e2ee import (
     channel_listeners,
@@ -26,15 +27,19 @@ from bot.voice_e2ee import (
     connection,
     ensure_voice_encryption_ready,
     is_audible,
+    LISTENER_WAIT_SECONDS,
     is_dave_session_active,
     missing_from_group,
     session,
+    wait_for_listener,
     wait_until_audible,
 )
 from db.models import PrayerType
 from db.prayers import get_guild_config, get_weekly_schedule, log_voice_join, log_voice_leave
 
 log = logging.getLogger(__name__)
+# How long the bot stays in an empty channel before leaving.
+IDLE_DISCONNECT_SECONDS = 2.0
 MEDIA_DIR = Path("media/prayers")
 
 
@@ -213,18 +218,23 @@ class PrayerBotPlaybackMixin:
         cb = self._make_schedule_disconnect(guild_id)
         await cb(player, track)
 
-    async def _wait_for_listeners_in_group(self, guild_id: str, vc) -> None:
-        """Give a just-joined listener a moment to enter the E2EE group.
+    async def _wait_for_listeners_in_group(self, guild_id: str, vc) -> bool:
+        """Hold the prayer until someone can actually hear it.
 
-        Someone outside the bot's MLS group cannot decrypt its frames, which is
-        indistinguishable from silence.
+        A listener outside the bot's key group cannot decrypt its frames, and in
+        an empty channel Discord never forms a group at all — either way the
+        prayer plays to nobody.
         """
-        listeners = channel_listeners(vc)
-        if listeners and not await wait_until_audible(vc, listeners):
+        listeners = await wait_for_listener(vc, LISTENER_WAIT_SECONDS)
+        if not listeners:
+            log.warning("Nobody joined guild %s in %ss — prayer skipped", guild_id, int(LISTENER_WAIT_SECONDS))
+            return False
+        if not await wait_until_audible(vc, listeners):
             log.warning(
                 "Starting playback in guild %s with listeners outside the E2EE group",
                 guild_id,
             )
+        return True
 
     E2EE_WATCH_INTERVAL = 5.0
     E2EE_MAX_REPAIRS = 2
@@ -349,7 +359,8 @@ class PrayerBotPlaybackMixin:
             return False
         # Never start speaking to people who are not in the key group: their
         # clients cannot decrypt it, so the prayer would be silent for them.
-        await self._wait_for_listeners_in_group(guild_id, vc)
+        if not await self._wait_for_listeners_in_group(guild_id, vc):
+            return False
         if is_adhoc:
             log.info("Starting adhoc prayer sequence for guild %s", guild_id)
             await asyncio.sleep(5)
@@ -423,36 +434,19 @@ class PrayerBotPlaybackMixin:
         return success
 
     def _get_next_prayer_info(self, guild_id: str) -> dict | None:
-        schedules = get_weekly_schedule(self.db, guild_id)
-        if not schedules:
-            return None
         now = datetime.now(pytz.UTC)
-        current_weekday = now.weekday()
-        best_dt = None
-        best_sched = None
-        for s in schedules:
-            if not s.enabled:
-                continue
-            days_ahead = (s.day_of_week - current_weekday) % 7
-            if days_ahead == 0 and s.time_utc <= now.time():
-                days_ahead = 7
-            prayer_dt = now.replace(
-                hour=s.time_utc.hour,
-                minute=s.time_utc.minute,
-                second=0,
-                microsecond=0,
-            ) + timedelta(days=days_ahead)
-            if best_dt is None or prayer_dt < best_dt:
-                best_dt = prayer_dt
-                best_sched = s
-        if best_dt and best_sched:
-            delta = best_dt - now
-            return {
-                "schedule": best_sched,
-                "datetime": best_dt,
-                "minutes_left": math.ceil(delta.total_seconds() / 60),
-            }
-        return None
+        upcoming = next_occurrence(
+            get_weekly_schedule(self.db, guild_id), now, get_guild_config(self.db, guild_id)
+        )
+        if upcoming is None:
+            return None
+        prayer_dt, schedule = upcoming
+        delta = prayer_dt - now
+        return {
+            "schedule": schedule,
+            "datetime": prayer_dt,
+            "minutes_left": math.ceil(delta.total_seconds() / 60),
+        }
 
     def _get_next_prayer_minutes(self, guild_id: str) -> int | None:
         info = self._get_next_prayer_info(guild_id)
@@ -527,18 +521,29 @@ class PrayerBotPlaybackMixin:
             await player.pause()
             log.info("Guild %s: last listener left — paused", guild_id)
             self._cancel_disconnect_task(guild_id)
-            task = asyncio.create_task(self._disconnect_voice_after_delay(guild_id, 300))
+            # Leave shortly after the room empties. Discord dissolves the key
+            # group once nobody is listening, and that session can never become
+            # decryptable again — so the next listener must meet a fresh join.
+            task = asyncio.create_task(
+                self._disconnect_voice_after_delay(guild_id, int(IDLE_DISCONNECT_SECONDS))
+            )
             self._disconnect_tasks[guild_id] = task
         elif listener_count > 0 and not player.is_playing() and player.current_track is not None:
             if player.state.is_paused:
                 self._cancel_disconnect_task(guild_id)
                 vc = await self._ensure_voice_connected(guild_id)
+                listeners_ids = [m.id for m in listeners]
+                if vc is not None and not is_audible(vc, listeners_ids):
+                    # The session did not survive the empty room (Discord
+                    # dissolves the group). Only a fresh join can hand the
+                    # newcomers a key, and nobody was listening when it broke.
+                    vc = await self._reconnect_voice(guild_id)
                 if vc:
                     player.voice_client = vc
                     # Speaking before a listener is in the E2EE group is silence
                     # for them, so wait until Discord has added everyone. Then
                     # continue from where the prayer stopped — restarting the
                     # step would send it back to the beginning.
-                    await wait_until_audible(vc, [m.id for m in listeners])
+                    await wait_until_audible(vc, listeners_ids)
                     await player.resume()
                     log.info("Guild %s: listener joined — resumed", guild_id)

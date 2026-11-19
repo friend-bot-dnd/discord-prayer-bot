@@ -75,11 +75,41 @@ def missing_from_group(vc: Any, member_ids: Any) -> list[int]:
 
 
 def is_audible(vc: Any, member_ids: Any = None) -> bool:
-    """True when the connection encrypts and every listener is in its group."""
+    """True when the connection encrypts and every listener is in its group.
+
+    ``can_encrypt`` alone is not enough: when a channel empties Discord
+    dissolves the MLS group and the session drops to ``pending`` with epoch 0
+    while ``can_encrypt`` still reports true. Frames sent in that state decrypt
+    to nothing for anyone who joins next.
+    """
     if not can_encrypt(vc):
+        return False
+    sess = session(vc)
+    if sess is None or not is_dave_session_active(sess):
+        return False
+    if int(getattr(sess, "epoch", 0) or 0) <= 0:
         return False
     wanted = channel_listeners(vc) if member_ids is None else [int(u) for u in member_ids]
     return not missing_from_group(vc, wanted)
+
+
+LISTENER_WAIT_SECONDS = 15 * 60.0
+
+
+async def wait_for_listener(vc: Any, timeout: float = LISTENER_WAIT_SECONDS, poll_interval: float = 1.0) -> list[int]:
+    """Wait until a human is in the bot's channel; returns their ids or ``[]``.
+
+    Speaking in an empty channel leaves Discord without anyone to form a key
+    group with (epoch 0), so those frames are lost and the first person to
+    arrive hears nothing.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not (listeners := channel_listeners(vc)):
+        if loop.time() >= deadline:
+            return []
+        await asyncio.sleep(poll_interval)
+    return listeners
 
 
 async def wait_until_audible(

@@ -12,11 +12,31 @@ from db.database import Database
 from db.models import PrayerType, PRAYER_AUDIO_MAP
 
 
+class FakeSession:
+    """An active DAVE session whose group already holds the fake listener."""
+
+    def __init__(self, users=(42,)):
+        self.status = "active"
+        self.epoch = 1
+        self.users = set(users)
+
+    def get_user_ids(self):
+        return set(self.users)
+
+
+class FakeConnection:
+    can_encrypt = True
+
+    def __init__(self):
+        self.dave_session = FakeSession()
+
+
 class FakeVC:
     def __init__(self):
         self._playing = False
         self._connected = True
-        self.channel = SimpleNamespace(id="111")
+        self.channel = SimpleNamespace(id="111", members=[SimpleNamespace(id=42, bot=False)])
+        self._connection = FakeConnection()
 
     def is_playing(self):
         return self._playing
@@ -759,3 +779,48 @@ def test_play_hooks_install_is_idempotent():
     install(cls)
     after = (cls._start_prayer_playback, cls._is_prayer_playing)
     assert before == after
+
+
+def test_prayer_is_held_until_someone_can_hear_it():
+    """An empty channel has no key group, so starting there is silence."""
+
+    async def run():
+        bot = make_bot()
+        player = _prep(bot)
+        vc = bot.voice_connections["g1"]
+        vc.channel.members.clear()
+        vc._connection.dave_session.users = set()
+
+        task = asyncio.create_task(
+            bot._start_prayer_playback("g1", PrayerType.BUDDHIST, PRAYER_AUDIO_MAP[PrayerType.BUDDHIST])
+        )
+        await asyncio.sleep(0.3)
+        assert player.starts == []
+
+        vc.channel.members.append(SimpleNamespace(id=7, bot=False))
+        vc._connection.dave_session.users = {7}
+        assert await asyncio.wait_for(task, timeout=5) is True
+        assert len(player.starts) == 1
+
+    asyncio.run(run())
+
+
+def test_prayer_is_skipped_when_nobody_joins():
+    async def run():
+        import bot.prayer_bot_playback as pb
+
+        orig = pb.LISTENER_WAIT_SECONDS
+        pb.LISTENER_WAIT_SECONDS = 0.3
+        try:
+            bot = make_bot()
+            player = _prep(bot)
+            bot.voice_connections["g1"].channel.members.clear()
+            ok = await bot._start_prayer_playback(
+                "g1", PrayerType.BUDDHIST, PRAYER_AUDIO_MAP[PrayerType.BUDDHIST]
+            )
+            assert ok is False
+            assert player.starts == []
+        finally:
+            pb.LISTENER_WAIT_SECONDS = orig
+
+    asyncio.run(run())

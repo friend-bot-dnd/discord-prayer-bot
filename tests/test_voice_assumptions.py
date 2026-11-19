@@ -77,6 +77,7 @@ class _FakeSession:
         self.voice_privacy_code = privacy_code
         self._can_encrypt = can_encrypt
         self.status = "active"
+        self.epoch = 7
 
     def get_user_ids(self) -> list[int]:
         return [1]
