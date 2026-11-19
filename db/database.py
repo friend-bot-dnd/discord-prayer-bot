@@ -103,6 +103,15 @@ class Database:
                     cur, "daily_draw_state", "archive_button_removed", "INTEGER DEFAULT 0"
                 )
                 self._ensure_column(cur, "prayer_schedules", "time_utc", "TEXT")
+                # The offset a row's UTC time was saved against: without it the
+                # wall-clock time cannot be recovered after a DST change.
+                self._ensure_column(cur, "prayer_schedules", "utc_offset_hours", "REAL")
+                cur.execute(
+                    "UPDATE prayer_schedules SET utc_offset_hours = COALESCE("
+                    "(SELECT g.timezone_offset_hours FROM guild_configs g "
+                    " WHERE g.guild_id = prayer_schedules.guild_id), 0.0) "
+                    "WHERE utc_offset_hours IS NULL"
+                )
                 existing_cols = {row["name"] for row in cur.execute("PRAGMA table_info(prayer_schedules)").fetchall()}
                 if "time" in existing_cols and "time_utc" in existing_cols:
                     cur.execute("UPDATE prayer_schedules SET time_utc = time WHERE time_utc IS NULL OR time_utc = ''")

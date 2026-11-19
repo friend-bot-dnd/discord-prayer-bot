@@ -244,6 +244,7 @@ class PrayerSchedule:
     time_utc: time
     enabled: bool = True
     created_at: Optional[datetime] = None
+    utc_offset_hours: Optional[float] = None
 
 
 @dataclass(slots=True)

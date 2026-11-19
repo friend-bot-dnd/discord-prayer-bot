@@ -9,6 +9,12 @@ from db.prayers import upsert_schedule, get_audio_filename
 from bot.prayer_scheduler import PrayerScheduler
 
 
+async def _run_and_settle(scheduler: PrayerScheduler) -> None:
+    """Run one scheduler tick and let the playback task it starts finish."""
+    await scheduler._check_and_play()
+    await asyncio.gather(*scheduler._tasks)
+
+
 def test_scheduler_pre_join():
     async def run_test():
         with Database(":memory:") as db:
@@ -42,11 +48,13 @@ def test_scheduler_pre_join():
             with patch('bot.prayer_scheduler.datetime') as mock_datetime:
                 mock_datetime.now.return_value = now
                 await scheduler._check_and_play()
+                await asyncio.gather(*scheduler._tasks)
             assert len(played_calls) == 1
             assert "2024-01-01:0:christian:12:05:00" in scheduler._pre_joined
             with patch('bot.prayer_scheduler.datetime') as mock_datetime:
                 mock_datetime.now.return_value = now
                 await scheduler._check_and_play()
+                await asyncio.gather(*scheduler._tasks)
             assert len(played_calls) == 1
     asyncio.run(run_test())
 
@@ -137,7 +145,7 @@ def test_active_prayer_added_on_play():
             mock_now = datetime(2025, 1, 6, 12, 0, 0)
             mock_dt.now.return_value = mock_now
             mock_dt.side_effect = lambda *a, **k: datetime(*a, **k)
-            asyncio.run(scheduler._check_and_play())
+            asyncio.run(_run_and_settle(scheduler))
         assert "2025-01-06:0:christian:12:00:00" in scheduler._active_prayers
 
 

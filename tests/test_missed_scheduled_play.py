@@ -58,10 +58,14 @@ def test_failed_play_not_latched_and_retries_in_grace():
                 mock_dt.now.return_value = now
                 mock_dt.side_effect = lambda *a, **k: datetime(*a, **k)
                 await scheduler._check_and_play()
+                await asyncio.gather(*scheduler._tasks)
                 await scheduler._check_and_play()
+                await asyncio.gather(*scheduler._tasks)
             assert len(plays) == 2
             assert scheduler._played == set()
-            assert any(k.endswith("christian:12:00:00") for k in scheduler._active_prayers)
+            # A prayer that never started must not be watched: the watchdog
+            # would spend its only repair on it.
+            assert scheduler._active_prayers == {}
 
     asyncio.run(run_test())
 
