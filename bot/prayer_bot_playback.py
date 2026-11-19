@@ -24,6 +24,7 @@ from bot.voice_e2ee import (
     channel_listeners,
     complete_dave_transition,
     connection,
+    ensure_voice_encryption_ready,
     is_audible,
     is_dave_session_active,
     missing_from_group,
