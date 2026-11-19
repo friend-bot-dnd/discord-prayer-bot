@@ -284,7 +284,11 @@ class PrayerBotPlaybackMixin:
             log.exception("Voice E2EE watchdog failed in guild %s", guild_id)
 
     def _finish_dave_transition(self, guild_id: str, vc, listeners: list[int]) -> bool:
-        """Complete a pending epoch in place; True when sound came back."""
+        """Finish a pending epoch in place; True when sound came back.
+
+        Note: ``reinit_dave_session()`` is *not* a recovery lever — measured
+        live, it resets the epoch to 0 and drops listeners out of the group.
+        """
         sess = session(vc)
         if sess is None or not is_dave_session_active(sess):
             return False
