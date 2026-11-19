@@ -1,4 +1,3 @@
-"""Voice connect and guild discovery for PrayerBot."""
 from __future__ import annotations
 
 import asyncio
@@ -16,7 +15,6 @@ from db.prayers import get_guild_config
 
 log = logging.getLogger(__name__)
 TTS_DIR = Path("data/tts")
-
 
 class PrayerBotVoiceMixin:
     async def setup_hook(self) -> None:
@@ -111,11 +109,6 @@ class PrayerBotVoiceMixin:
         log.info("Guild %s set up (voice on-demand): voice=%s, text=%s", guild_id, cfg.voice_channel_id, cfg.text_channel_id)
 
     async def _reconnect_voice(self, guild_id: str) -> discord.VoiceClient | None:
-        """Drop the current voice session and join again.
-
-        A fresh voice connection always completes the DAVE handshake, so this
-        is the escalation path when a session never becomes usable.
-        """
         cfg = get_guild_config(self.db, guild_id)
         guild = self.get_guild(int(guild_id)) if cfg else None
         if not cfg or guild is None or not cfg.voice_channel_id:
@@ -154,8 +147,6 @@ class PrayerBotVoiceMixin:
             else:
                 with contextlib.suppress(Exception):
                     await guild.voice_client.disconnect(force=True)
-        # A reconnect only helps when somebody is listening: Discord does not
-        # create an MLS group while the bot is alone in the channel.
         has_listeners = any(not m.bot for m in voice_channel.members)
 
         async def _reconnect():

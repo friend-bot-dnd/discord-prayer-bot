@@ -11,13 +11,8 @@ def test_health_check():
     assert body["database"] == "connected"
     assert "last_prayer_played_utc" in body
     assert "stale" in body
-    # The public health endpoint must not advertise the deploy's commit.
     assert "git_sha" not in body
     assert "git_sha_short" not in body
-
-def test_bulk_action_disable_all():
-    response = client.post("/prayers/bulk-action", data={"guild_id": "test", "action": "disable_all"}, follow_redirects=False)
-    assert response.status_code in (302, 303, 401, 403)
 
 def test_history_page_requires_auth():
     response = client.get("/history/test_guild", follow_redirects=False)

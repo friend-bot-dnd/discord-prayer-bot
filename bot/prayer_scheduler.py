@@ -14,24 +14,16 @@ from db.prayers import get_audio_filename, get_guild_config, get_weekly_schedule
 
 log = logging.getLogger(__name__)
 
-WATCHDOG_MAX_WINDOW_SECONDS = 600  # 10 minutes
-WATCHDOG_MAX_RETRIES = 1  # Max retry attempts per active prayer window
-PLAY_GRACE_MINUTES = 10  # retry scheduled start this long after T=0
-
+WATCHDOG_MAX_WINDOW_SECONDS = 600
+WATCHDOG_MAX_RETRIES = 1
+PLAY_GRACE_MINUTES = 10
 
 def _as_utc(dt: datetime) -> datetime:
-    """Ensure datetime is timezone-aware and converted to UTC."""
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC)
 
-
 class PrayerScheduler:
-    """Checks every 30 seconds for prayers that should play now or soon.
-
-    - Calls on_pre_prayer(guild_id) X min before scheduled prayer time.
-    - Calls play_prayer(guild_id, prayer_type, filename) at exact prayer time.
-    """
 
     def __init__(
         self,
@@ -146,11 +138,6 @@ class PrayerScheduler:
                 task.add_done_callback(self._tasks.discard)
 
     async def _play_slot(self, sched, play_key: str, pre_key: str) -> None:
-        """Play one scheduled prayer without holding up the scheduler loop.
-
-        Starting a prayer can wait minutes for a listener; awaiting that here
-        would stop every other schedule and the watchdog in this guild.
-        """
         try:
             filename = get_audio_filename(sched.prayer_type)
             success = await self.play_prayer(self.guild_id, sched.prayer_type, filename)

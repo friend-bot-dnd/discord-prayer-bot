@@ -1,9 +1,3 @@
-"""Auth for the dashboard: one admin token, signed session cookies.
-
-The token is read in exactly one place. The cookie never carries it: a cookie
-holds a timestamp plus a signature made with the token, so a leaked cookie
-expires, cannot be replayed forever and does not expose the password.
-"""
 
 from __future__ import annotations
 
@@ -19,35 +13,26 @@ SESSION_COOKIE_NAME = "prayer_session"
 SESSION_TTL_SECONDS = 24 * 60 * 60
 _COOKIE_VERSION = "v1"
 
-
 def admin_token() -> str:
-    """The configured admin token (the documented default if unset)."""
     return os.environ.get("ADMIN_TOKEN") or DEFAULT_ADMIN_TOKEN
 
-
 def require_configured() -> None:
-    """Refuse to serve the dashboard with an unset or default token."""
     if not os.environ.get("ADMIN_TOKEN") or admin_token() == DEFAULT_ADMIN_TOKEN:
         raise RuntimeError(
             "ADMIN_TOKEN is not set (or is still the default). "
             "Set a long random value before starting the dashboard."
         )
 
-
 def _sign(token: str, stamp: int) -> str:
     return hmac.new(
         token.encode(), f"{_COOKIE_VERSION}:{stamp}".encode(), hashlib.sha256
     ).hexdigest()
 
-
 def make_session_cookie(*, now: float | None = None) -> str:
-    """A cookie value that proves login without containing the token."""
     stamp = int(now if now is not None else time.time())
     return f"{_COOKIE_VERSION}.{stamp}.{_sign(admin_token(), stamp)}"
 
-
 def session_is_valid(value: str | None, *, now: float | None = None) -> bool:
-    """True while a cookie is unexpired and its signature still matches."""
     if not value:
         return False
     parts = value.split(".")
@@ -62,21 +47,17 @@ def session_is_valid(value: str | None, *, now: float | None = None) -> bool:
         return False
     return hmac.compare_digest(parts[2], _sign(admin_token(), stamp))
 
-
 def get_token_from_request(request: Request) -> str | None:
-    """Read the admin token from the Authorization header."""
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
         return auth_header[len("Bearer "):]
     return None
-
 
 def verify_token(request: Request) -> bool:
     token = get_token_from_request(request)
     if token is not None:
         return hmac.compare_digest(str(token), admin_token())
     return session_is_valid(request.cookies.get(SESSION_COOKIE_NAME))
-
 
 def require_auth(request: Request) -> None:
     if not verify_token(request):

@@ -1,4 +1,3 @@
-"""Dashboard command loop and cache cleanup for PrayerBot."""
 from __future__ import annotations
 
 import asyncio
@@ -16,7 +15,6 @@ from db.prayers import cleanup_old_logs
 log = logging.getLogger(__name__)
 TTS_DIR = Path("data/tts")
 
-
 class PrayerBotCommandsMixin:
     async def _command_loop(self) -> None:
         await asyncio.sleep(5)
@@ -32,7 +30,6 @@ class PrayerBotCommandsMixin:
             try:
                 result = await self._handle_command(cmd.command, cmd.payload)
             except Exception as exc:
-                # A bad payload must not block every later command forever.
                 log.exception("Command %s failed", cmd.command)
                 result = f"error:{type(exc).__name__}"
             cmd_queue.mark_done(self.db, cmd.command_id, result=result or "ok")

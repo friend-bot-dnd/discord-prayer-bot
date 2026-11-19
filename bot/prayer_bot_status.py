@@ -1,4 +1,3 @@
-"""VC status updates and slash commands for PrayerBot."""
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +10,6 @@ from db.models import PrayerType
 from db.prayers import get_audio_filename, get_guild_config
 
 log = logging.getLogger(__name__)
-
 
 class PrayerBotStatusMixin:
     def _log_permissions(self, guild: discord.Guild, voice_channel_id: str | None) -> None:
@@ -43,7 +41,6 @@ class PrayerBotStatusMixin:
         )
 
     async def _update_all_voice_statuses(self) -> None:
-        """Refresh every server's voice-channel status, in parallel."""
         minutes = await asyncio.gather(
             *(self._status_for_guild(guild) for guild in self.guilds)
         )
@@ -55,13 +52,11 @@ class PrayerBotStatusMixin:
         await self.change_presence(activity=discord.Game(name=text))
 
     def _refresh_statuses_soon(self) -> None:
-        """Ask for a status refresh without blocking and without overlap."""
         task = getattr(self, "_status_refresh_task", None)
         if task is None or task.done():
             self._status_refresh_task = asyncio.create_task(self._update_all_voice_statuses())
 
     async def _status_for_guild(self, guild: discord.Guild) -> int | None:
-        """Set one server's status text. Returns minutes until its next prayer."""
         guild_id = str(guild.id)
         cfg = get_guild_config(self.db, guild_id)
         if not cfg or not cfg.enabled or not cfg.voice_channel_id:
@@ -78,8 +73,6 @@ class PrayerBotStatusMixin:
             if connected and connected.is_connected():
                 await channel.edit(status=status)
             elif cfg.status_blip_enabled:
-                # Joining briefly is the only way to write a voice status while
-                # the bot is not in the channel; it leaves immediately after.
                 blip = await channel.connect(timeout=10.0, reconnect=False)
                 try:
                     await channel.edit(status=status)
