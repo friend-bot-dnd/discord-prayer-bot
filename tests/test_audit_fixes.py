@@ -43,6 +43,26 @@ def test_a_bad_command_does_not_block_the_queue():
 
     assert queue.pending(bot.db) == []
 
+def test_an_unexpected_command_error_is_recorded_not_retried(monkeypatch):
+    bot = _bot()
+    calls = []
+
+    async def boom(command, payload):
+        calls.append(command)
+        if command == "skip":
+            raise RuntimeError("kaboom")
+        return "ok"
+
+    monkeypatch.setattr(bot, "_handle_command", boom)
+    queue.enqueue(bot.db, command="skip", requested_by="dash")
+    queue.enqueue(bot.db, command="pause", requested_by="dash", payload={"guild_id": "1"})
+
+    asyncio.run(bot._drain_commands())
+
+    assert calls == ["skip", "pause"]
+    rows = queue.recent(bot.db, limit=5)
+    assert {r.result for r in rows} == {"error:RuntimeError", "ok"}
+
 def test_dashboard_refuses_the_default_token(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", DEFAULT_ADMIN_TOKEN)
     with pytest.raises(RuntimeError):
@@ -54,6 +74,16 @@ def test_dashboard_refuses_the_default_token(monkeypatch):
 
     monkeypatch.setenv("ADMIN_TOKEN", "a-real-secret")
     require_configured()
+
+def test_session_cookie_does_not_contain_the_token(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "a-real-secret")
+    cookie = make_session_cookie()
+
+    assert "a-real-secret" not in cookie
+    assert session_is_valid(cookie)
+    assert not session_is_valid(cookie[:-1] + "0")
+    assert not session_is_valid("v1.1.deadbeef")
+    assert not session_is_valid(None)
 
 def test_session_cookie_expires(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", "a-real-secret")
@@ -140,3 +170,4 @@ def test_dashboard_port_is_not_public():
     compose = Path("docker-compose.yml").read_text()
     assert '"127.0.0.1:8700:8000"' in compose
     assert '"8700:8000"' not in compose
+

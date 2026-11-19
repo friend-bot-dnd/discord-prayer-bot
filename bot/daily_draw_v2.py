@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timedelta
 
 DRAW_DAY_ANCHOR_HOUR = 7
 REPOST_SPACING_HOURS = 5
+SLOTS_PER_DRAW_DAY = 5
 LAST_SLOT_INDEX = 4
 TICK_GRACE = timedelta(minutes=5)
 

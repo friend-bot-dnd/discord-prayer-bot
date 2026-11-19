@@ -9,6 +9,7 @@ from bot.voice_e2ee import (
     ensure_voice_encryption_ready,
     is_audible,
     missing_from_group,
+    wait_until_audible,
 )
 
 class FakeStatus:
@@ -65,6 +66,15 @@ FAST = {"timeout": 0.25, "poll_interval": 0.05}
 CHANNEL_WITH_LISTENER = SimpleNamespace(members=[SimpleNamespace(bot=False, id=1)])
 CHANNEL_EMPTY = SimpleNamespace(members=[])
 
+def test_group_membership_gate_returns_true_when_listener_is_inside() -> None:
+    session = FakeSession()
+    session.user_ids = [1, 42]
+    conn = FakeConn(session)
+    conn.can_encrypt = True
+    vc = _vc(conn)
+
+    assert asyncio.run(wait_until_audible(vc, [42], timeout=0.2)) is True
+
 def test_is_audible_needs_encryption_not_just_group_membership() -> None:
     session = FakeSession()
     session.user_ids = [42]
@@ -76,10 +86,246 @@ def test_is_audible_needs_encryption_not_just_group_membership() -> None:
     conn.can_encrypt = True
     assert is_audible(vc, [42]) is True
 
+def test_group_membership_gate_times_out_when_listener_is_missing() -> None:
+    session = FakeSession()
+    session.user_ids = [1]
+    vc = _vc(FakeConn(session))
+
+    assert asyncio.run(wait_until_audible(vc, [42], timeout=0.1, poll_interval=0.02)) is False
+
+def test_no_connection_is_not_ready() -> None:
+    assert _ready(None) is False
+
 def test_connection_without_an_e2ee_session_is_not_ready() -> None:
     conn = FakeConn(None)
 
     assert _ready(conn, **FAST) is False
+
+def test_session_less_connection_is_escalated_to_a_fresh_one() -> None:
+    session = FakeSession()
+    session.voice_privacy_code = "9999"
+    fresh = FakeConn(session)
+    fresh.can_encrypt = True
+    replace = _vc(None)
+
+    async def reconnect() -> SimpleNamespace:
+        replace._connection = fresh
+        return SimpleNamespace(_connection=fresh)
+
+    assert _ready(None, **dict(FAST, reconnect=reconnect)) is True
+    assert fresh.can_encrypt is True
+
+def test_already_encrypting_does_not_touch_the_session() -> None:
+    session = FakeSession()
+    session.voice_privacy_code = "1234"
+    conn = FakeConn(session)
+    conn.can_encrypt = True
+
+    assert _ready(conn) is True
+    assert session.calls == []
+
+def test_ready_without_a_privacy_code_is_still_trusted() -> None:
+    session = FakeSession(flip_on_prepare=False)
+    conn = FakeConn(session)
+    conn.can_encrypt = True
+
+    async def reconnect():
+        raise AssertionError("must not reconnect just for a missing privacy code")
+
+    vc = SimpleNamespace(_connection=conn)
+    assert (
+        asyncio.run(
+            ensure_voice_encryption_ready(
+                vc, FAST["timeout"], FAST["poll_interval"], reconnect=reconnect
+            )
+        )
+        is True
+    )
+    assert session.calls == []
+
+def test_active_session_without_keys_finishes_the_transition() -> None:
+    session = FakeSession(flip_on_prepare=True)
+    conn = FakeConn(session)
+
+    assert _ready(conn, timeout=2.0) is True
+    assert ("prepare", 0, 1) in session.calls
+    assert ("passthrough", False) in session.calls
+    assert conn.can_encrypt is True
+
+def test_transition_is_attempted_only_once_while_waiting() -> None:
+    session = FakeSession(flip_on_prepare=False)
+    conn = FakeConn(session)
+
+    assert _ready(conn, **FAST) is False
+    prepares = [call for call in session.calls if call[0] == "prepare"]
+    assert len(prepares) == 1
+
+def test_session_that_never_becomes_active_times_out_without_preparing() -> None:
+    session = FakeSession(status="pending", flip_on_prepare=True)
+    conn = FakeConn(session)
+
+    assert _ready(conn, **dict(FAST, timeout=0.15)) is False
+    assert session.calls == []
+
+def test_prepare_failure_is_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = FakeSession()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("mls state is gone")
+
+    monkeypatch.setattr(session, "prepare_transition", boom)
+    conn = FakeConn(session)
+
+    assert _ready(conn, **dict(FAST, timeout=0.15)) is False
+
+def test_stuck_session_is_escalated_to_a_fresh_connection() -> None:
+    stuck = FakeConn(FakeSession(status="pending"))
+    healthy_session = FakeSession(flip_on_prepare=True)
+    healthy = FakeConn(healthy_session)
+
+    calls: list[int] = []
+
+    async def reconnect():
+        calls.append(1)
+        return SimpleNamespace(_connection=healthy)
+
+    vc = SimpleNamespace(_connection=stuck)
+    ok = asyncio.run(
+        ensure_voice_encryption_ready(vc, reconnect=reconnect, **FAST)
+    )
+
+    assert ok is True
+    assert len(calls) == 1
+    assert healthy.can_encrypt is True
+
+def test_reconnect_is_bounded_by_attempts() -> None:
+    stuck = FakeConn(FakeSession(status="pending"))
+    calls: list[int] = []
+
+    async def reconnect():
+        calls.append(1)
+        return SimpleNamespace(_connection=stuck)
+
+    vc = SimpleNamespace(_connection=stuck)
+    ok = asyncio.run(
+        ensure_voice_encryption_ready(vc, reconnect=reconnect, attempts=2, **FAST)
+    )
+
+    assert ok is False
+    assert len(calls) == 1
+
+def test_reconnect_failure_is_not_raised() -> None:
+    stuck = FakeConn(FakeSession(status="pending"))
+
+    async def reconnect():
+        raise RuntimeError("gateway is down")
+
+    vc = SimpleNamespace(_connection=stuck)
+    assert asyncio.run(ensure_voice_encryption_ready(vc, reconnect=reconnect, **FAST)) is False
+
+def test_watchdog_restarts_the_prayer_when_encryption_is_lost(monkeypatch) -> None:
+    from bot.prayer_bot_playback import PrayerBotPlaybackMixin
+
+    restarted: list[tuple] = []
+
+    class FakePlayer:
+        def is_playing(self):
+            return True
+
+    class FakeWatchVC:
+        def is_connected(self):
+            return True
+
+        channel = CHANNEL_WITH_LISTENER
+        _connection = SimpleNamespace(can_encrypt=False,
+                                      dave_session=SimpleNamespace(status="pending"))
+
+    class Stub(PrayerBotPlaybackMixin):
+        players = {"g": FakePlayer()}
+        voice_connections = {"g": FakeWatchVC()}
+        _session_gen = {"g": 1}
+        _session_args = {"g": ("psalm_91", "The 91st Psalm.mp3")}
+        _e2ee_watch_tasks: dict = {}
+
+        async def _start_prayer_playback(self, *args, **kwargs):
+            restarted.append((args, kwargs))
+            return True
+
+    Stub.E2EE_WATCH_INTERVAL = 0.01
+    asyncio.run(Stub()._e2ee_watchdog("g", 1))
+
+    assert len(restarted) == 1
+    assert restarted[0][0][0] == "g"
+
+def test_watchdog_restarts_when_no_session_exists_at_all() -> None:
+    from bot.prayer_bot_playback import PrayerBotPlaybackMixin
+
+    restarted: list[tuple] = []
+
+    class FakePlayer:
+        def is_playing(self):
+            return True
+
+    class FakeWatchVC:
+        def is_connected(self):
+            return True
+
+        channel = CHANNEL_WITH_LISTENER
+        _connection = SimpleNamespace(can_encrypt=False, dave_session=None,
+                                      dave_protocol_version=0)
+
+    class Stub(PrayerBotPlaybackMixin):
+        players = {"g": FakePlayer()}
+        voice_connections = {"g": FakeWatchVC()}
+        _session_gen = {"g": 1}
+        _session_args = {"g": ("psalm_91", "The 91st Psalm.mp3")}
+        _e2ee_watch_tasks: dict = {}
+
+        async def _start_prayer_playback(self, *args, **kwargs):
+            restarted.append((args, kwargs))
+            return True
+
+    Stub.E2EE_WATCH_INTERVAL = 0.01
+    asyncio.run(Stub()._e2ee_watchdog("g", 1))
+
+    assert len(restarted) == 1
+
+def test_watchdog_repairs_when_a_listener_is_outside_the_group() -> None:
+    from bot.prayer_bot_playback import PrayerBotPlaybackMixin
+
+    restarted: list[tuple] = []
+    session = FakeSession()
+    session.voice_privacy_code = "1234"
+    session.user_ids = [1]  # bot only
+    conn = FakeConn(session)
+    conn.can_encrypt = True
+
+    class FakePlayer:
+        def is_playing(self):
+            return True
+
+    class FakeWatchVC:
+        def is_connected(self):
+            return True
+
+        channel = SimpleNamespace(members=[SimpleNamespace(bot=False, id=2)])
+        _connection = conn
+
+    class Stub(PrayerBotPlaybackMixin):
+        players = {"g": FakePlayer()}
+        voice_connections = {"g": FakeWatchVC()}
+        _session_gen = {"g": 1}
+        _session_args = {"g": ("psalm_91", "The 91st Psalm.mp3")}
+        _e2ee_watch_tasks: dict = {}
+
+        async def _start_prayer_playback(self, *args, **kwargs):
+            restarted.append((args, kwargs))
+            return True
+
+    Stub.E2EE_WATCH_INTERVAL = 0.01
+    asyncio.run(Stub()._e2ee_watchdog("g", 1))
+
+    assert len(restarted) == 1
 
 def test_watchdog_waits_for_an_audience_before_repairing() -> None:
     from bot.prayer_bot_playback import PrayerBotPlaybackMixin
@@ -114,6 +360,43 @@ def test_watchdog_waits_for_an_audience_before_repairing() -> None:
         asyncio.run(asyncio.wait_for(Stub()._e2ee_watchdog("g", 1), timeout=0.2))
 
     assert restarted == []
+
+def test_watchdog_finishes_transition_instead_of_restarting() -> None:
+    from bot.prayer_bot_playback import PrayerBotPlaybackMixin
+
+    restarted: list[tuple] = []
+    session = FakeSession(flip_on_prepare=True)
+    conn = FakeConn(session)
+
+    class FakePlayer:
+        def is_playing(self):
+            return True
+
+    class FakeWatchVC:
+        def is_connected(self):
+            return True
+
+        channel = CHANNEL_WITH_LISTENER
+        _connection = conn
+
+    class Stub(PrayerBotPlaybackMixin):
+        players = {"g": FakePlayer()}
+        voice_connections = {"g": FakeWatchVC()}
+        _session_gen = {"g": 1}
+        _session_args = {"g": ("psalm_91", "The 91st Psalm.mp3")}
+        _e2ee_watch_tasks: dict = {}
+
+        async def _start_prayer_playback(self, *args, **kwargs):
+            restarted.append((args, kwargs))
+            return True
+
+    Stub.E2EE_WATCH_INTERVAL = 0.01
+    with pytest.raises(asyncio.TimeoutError):
+        asyncio.run(asyncio.wait_for(Stub()._e2ee_watchdog("g", 1), timeout=0.2))
+
+    assert restarted == []
+    assert conn.can_encrypt is True
+    assert [call for call in session.calls if call[0] == "prepare"]
 
 def test_dissolved_group_is_not_audible_even_though_it_can_encrypt() -> None:
     session = FakeSession(status="pending")

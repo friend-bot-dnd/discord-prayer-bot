@@ -28,7 +28,7 @@ class ChannelRow:
     channel_id: str
     channel_name: str | None
     channel_type: str  # 'voice' | 'text' | ...
-    parent_id: str | None = None
+    parent_id: str | None = None  # for a text chat nested under a voice channel
 
 def discover_guild(db: Database, guild_id: str, guild_name: str | None) -> None:
     db.execute(
@@ -88,6 +88,30 @@ def apply_guild_config(
         (guild_id, bool(enabled), voice_channel_id or None, text_channel_id or None, logging_channel_id or None, float(timezone_offset_hours), timezone_name, tts_voice, int(pre_join_minutes), int(post_stay_minutes), int(status_blip_enabled)),
     )
 
+def seed_env_guild(db: Database, config: object) -> None:
+    guild_id = getattr(config, "guild_id", None)
+    if not guild_id:
+        return
+    gid = str(guild_id)
+    existing = get_guild_config(db, gid)
+    if existing and (existing.voice_channel_id or existing.text_channel_id):
+        return
+    vcid = getattr(config, "voice_channel_id", None)
+    tcid = getattr(config, "text_channel_id", None)
+    vcid = str(vcid) if vcid else None
+    tcid = str(tcid) if tcid else None
+    if not vcid:
+        return
+    if not tcid:
+        tcid = get_associated_text_channel(db, gid, vcid)
+    known = {ch.channel_id: ch.channel_type for ch in get_guild_channels(db, gid)}
+    if vcid in known and (tcid is None or tcid in known):
+        apply_guild_config(
+            db, gid, enabled=True, voice_channel_id=vcid, text_channel_id=tcid,
+            timezone_offset_hours=existing.timezone_offset_hours if existing else 0.0,
+            tts_voice=existing.tts_voice if existing else "en-US-GuyNeural"
+        )
+
 def _row(r) -> GuildConfig:
     return GuildConfig(
         guild_id=r["guild_id"],
@@ -125,6 +149,9 @@ def get_guild_configs(db: Database) -> list[GuildConfig]:
 def get_guild_config(db: Database, guild_id: str) -> GuildConfig | None:
     row = db.fetchone("SELECT * FROM guild_configs WHERE guild_id=?", (guild_id,))
     return _row(row) if row is not None else None
+
+def get_enabled_guild_configs(db: Database) -> list[GuildConfig]:
+    return [c for c in get_guild_configs(db) if c.enabled]
 
 def get_guild_channels(db: Database, guild_id: str) -> list[ChannelRow]:
     rows = db.fetchall(

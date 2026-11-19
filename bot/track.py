@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class TrackResponse:
-    """One audio file the player can start."""
 
     track_id: str
     title: str
