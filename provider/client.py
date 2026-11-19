@@ -123,10 +123,16 @@ class FileProviderClient:
         return self._client
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        """Send a request with retry-on-transient-failure."""
+        """Send a request, retrying transient failures for safe (GET) calls only.
+
+        A retried `POST /next` can advance the playlist twice when the first
+        response is lost, so writes are single-shot: better a visible error than
+        a silently skipped track.
+        """
         client = self._ensure_client()
         last_exc: Exception | None = None
-        for attempt in range(1, self.max_retries + 1):
+        attempts = self.max_retries if method == "GET" else 1
+        for attempt in range(1, attempts + 1):
             try:
                 resp = await client.request(method, path, **kwargs)
             except (httpx.TransportError, httpx.TimeoutException) as exc:

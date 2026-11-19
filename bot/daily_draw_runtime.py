@@ -209,8 +209,13 @@ class DailyDrawV2Mixin:
                         missing_logged = True
                 else:
                     missing_logged = False
-                    for guild_id in guild_ids:
-                        await self._daily_draw_tick(guild_id)
+                    results = await asyncio.gather(
+                        *(self._daily_draw_tick(gid) for gid in guild_ids),
+                        return_exceptions=True,
+                    )
+                    for gid, res in zip(guild_ids, results):
+                        if isinstance(res, Exception):
+                            log.error("Daily draw tick failed for guild %s: %s", gid, res)
             except Exception:
                 log.exception("Error in daily draw loop")
             await asyncio.sleep(60)

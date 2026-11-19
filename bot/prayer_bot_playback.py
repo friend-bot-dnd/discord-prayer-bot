@@ -38,8 +38,9 @@ from db.models import PrayerType
 from db.prayers import get_guild_config, get_weekly_schedule, log_voice_join, log_voice_leave
 
 log = logging.getLogger(__name__)
-# How long the bot stays in an empty channel before leaving.
-IDLE_DISCONNECT_SECONDS = 2.0
+# Grace period after the room empties. Playback pauses instantly; this only
+# decides when the bot leaves, and 30s survives a phone dropping signal.
+IDLE_DISCONNECT_SECONDS = 30.0
 MEDIA_DIR = Path("media/prayers")
 
 
@@ -430,7 +431,7 @@ class PrayerBotPlaybackMixin:
     async def _play_prayer_callback(self, guild_id: str, prayer_type: PrayerType, filename: str) -> bool:
         success = await self._start_prayer_playback(guild_id, prayer_type, filename)
         if success:
-            asyncio.create_task(self._update_all_voice_statuses())
+            self._refresh_statuses_soon()
         return success
 
     def _get_next_prayer_info(self, guild_id: str) -> dict | None:

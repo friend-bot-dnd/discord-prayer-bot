@@ -10,9 +10,12 @@ Includes:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hmac
+import logging
 import pytz
+import urllib.parse
 from datetime import datetime, time, timedelta
 
 from fastapi import APIRouter, Request, Form, Depends, Query
@@ -28,13 +31,18 @@ from db.prayers import (
     delete_schedule,
     get_audio_filename,
 )
+
 from db.prayers import get_guild_config, apply_guild_config
 from bot.prayer_time import next_occurrence
 from dashboard.auth import SESSION_COOKIE_NAME, SESSION_TTL_SECONDS, admin_token, make_session_cookie, require_auth
+
 from dashboard.health import compute_health
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 templates = Jinja2Templates(directory="dashboard/templates")
+_LOGIN_DELAY_SECONDS = 1.0
 
 
 def get_db():
@@ -56,7 +64,11 @@ async def health_check(db: Database = Depends(get_db)):
             {"status": "unhealthy", "database": "disconnected", "error": str(exc)},
             status_code=500
         )
-    return compute_health(db)
+    body = compute_health(db)
+    # Anonymous callers get liveness only; the commit sha is not public.
+    body.pop("git_sha", None)
+    body.pop("git_sha_short", None)
+    return body
 
 
 @router.get("/history/{guild_id}", response_class=HTMLResponse)
@@ -139,6 +151,9 @@ async def login(request: Request):
     form = await request.form()
     token = form.get("token", "")
     if not hmac.compare_digest(str(token), admin_token()):
+        # One second per failure: guessing over the network is otherwise free.
+        await asyncio.sleep(_LOGIN_DELAY_SECONDS)
+        log.warning("failed dashboard login from %s", request.client.host if request.client else "?")
         return HTMLResponse("<h2>Invalid token</h2><a href='/login'>Try again</a>", status_code=403)
     response = RedirectResponse("/servers", status_code=302)
     response.set_cookie(
@@ -233,29 +248,31 @@ async def save_prayers(
     # Convert and save schedules
     import pytz
     tz = pytz.timezone(timezone_name)
-    now = datetime.now() # Current date to determine correct DST offset
+    now = datetime.now(tz)  # guild-local date, so DST is decided in the guild's zone
     
     # Validate: no duplicate times per day
     seen: dict[str, set[str]] = {}  # day_idx -> set of times
+    failures = 0
     for s in schedules:
         local_time_str = form_data.get(f"time_{s.id}")
         if not local_time_str:
             continue
-        
-        # Local to UTC conversion using server-side Python
+
         try:
             local_t = time.fromisoformat(local_time_str)
             local_dt = tz.localize(datetime.combine(now.date(), local_t))
             utc_dt = local_dt.astimezone(pytz.UTC)
             utc_t_str = utc_dt.time().isoformat()
         except Exception:
+            failures += 1
+            log.warning("schedule %s: unreadable time %r", s.id, local_time_str, exc_info=True)
             continue
+
 
         day = str(s.day_of_week)
         if day not in seen:
             seen[day] = set()
         if utc_t_str in seen[day]:
-            import urllib.parse
             msg = urllib.parse.quote("Duplicate times on same day")
             return RedirectResponse(f"/prayers/{guild_id}?flash={msg}", status_code=303)
         seen[day].add(utc_t_str)
@@ -286,12 +303,17 @@ async def save_prayers(
                 else:
                     update_schedule(db, s.id, t, enabled_val, offset)
             except Exception:
-                pass
+                failures += 1
+                log.warning("schedule %s: save failed", s.id, exc_info=True)
 
     # Enqueue live apply
     from dashboard.commands import enqueue
     enqueue(db, command="apply_server", requested_by="admin", payload={"guild_id": guild_id})
-    return RedirectResponse(f"/prayers/{guild_id}?flash=Saved", status_code=303)
+    flash = "Saved" if not failures else f"Not everything saved ({failures} failed) — check the times"
+    return RedirectResponse(
+        f"/prayers/{guild_id}?flash={urllib.parse.quote(flash)}", status_code=303
+    )
+
 
 
 # ------------------------------------------------------------------ adhoc
@@ -483,6 +505,7 @@ async def servers_page(
     request: Request,
     db: Database = Depends(get_db),
 ):
+    require_auth(request)
     from db.prayers import get_guild_config, get_guild_channels
     from db.daily_draw import get_config as get_draw_config
     from dashboard.commands import recent

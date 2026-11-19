@@ -66,7 +66,7 @@ async def _on_pre_prayer(self, guild_id: str) -> bool:
         log.warning("Pre-join failed for guild %s", guild_id)
         return False
     await self._log_to_channel(guild_id, f"Joined voice channel <#{vc.channel.id}> before prayer.")
-    asyncio.create_task(self._update_all_voice_statuses())
+    self._refresh_statuses_soon()
     return True
 
 

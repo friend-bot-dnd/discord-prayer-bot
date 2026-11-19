@@ -170,3 +170,44 @@ def test_watchdog_budget_recovers_after_a_healthy_tick():
     asyncio.run(scheduler._watchdog_check())
 
     assert "k" not in scheduler._watchdog_retries
+
+
+def test_dockerignore_keeps_secrets_out_of_the_image():
+    from pathlib import Path
+
+    ignored = Path(".dockerignore").read_text()
+    assert ".env" in ignored
+    assert ".git" in ignored
+    assert ".venv" in ignored
+
+
+def test_dashboard_port_is_not_public():
+    from pathlib import Path
+
+    compose = Path("docker-compose.yml").read_text()
+    assert '"127.0.0.1:8700:8000"' in compose
+    assert '"8700:8000"' not in compose
+
+
+def test_provider_retries_reads_but_not_writes(monkeypatch):
+    import httpx
+
+    from provider.client import FileProviderClient, ProviderUnavailable
+
+    calls: list[str] = []
+
+    class Boom(httpx.AsyncClient):
+        async def request(self, method, url, **kwargs):
+            calls.append(method)
+            raise httpx.ConnectError("nope")
+
+    client = FileProviderClient("http://x", max_retries=3, client=Boom())
+
+    with pytest.raises(ProviderUnavailable):
+        asyncio.run(client._request("GET", "/current"))
+    assert len(calls) == 3
+
+    calls.clear()
+    with pytest.raises(ProviderUnavailable):
+        asyncio.run(client._request("POST", "/next"))
+    assert calls == ["POST"]

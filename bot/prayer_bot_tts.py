@@ -92,7 +92,7 @@ class PrayerBotTtsMixin:
             scheduler = self.schedulers.get(guild_id)
             if scheduler:
                 scheduler.clear_active()
-            asyncio.create_task(self._update_all_voice_statuses())
+            self._refresh_statuses_soon()
         return _on_finish
 
     def _is_voice_connected(self, guild_id: str) -> bool:
@@ -130,8 +130,8 @@ class PrayerBotTtsMixin:
         if callable(checker):
             try:
                 return bool(checker(guild_id))
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning("prayer-active check failed for guild %s: %s", guild_id, exc)
         player = self.players.get(guild_id)
         return bool(player and player.is_playing() and guild_id not in getattr(self, "_tts_playing", set()))
 
@@ -207,7 +207,7 @@ class PrayerBotTtsMixin:
         vc = await self._ensure_voice_connected(guild_id)
         if vc:
             await self._log_to_channel(guild_id, f"Joined voice channel <#{vc.channel.id}> before prayer.")
-            asyncio.create_task(self._update_all_voice_statuses())
+            self._refresh_statuses_soon()
 
     def _source_factory(self, path: str, seek_seconds: float, volume_percent: int):
         before, options = build_audio_options(seek_seconds, volume_percent)
