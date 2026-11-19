@@ -20,7 +20,16 @@ from bot.prayer_session import (
     session_plan,
 )
 from bot.state_framework import GuildScopedState
-from bot.voice_e2ee import complete_dave_transition, is_dave_session_active
+from bot.voice_e2ee import (
+    channel_listeners,
+    complete_dave_transition,
+    connection,
+    is_audible,
+    is_dave_session_active,
+    missing_from_group,
+    session,
+    wait_until_audible,
+)
 from db.models import PrayerType
 from db.prayers import get_guild_config, get_weekly_schedule, log_voice_join, log_voice_leave
 
@@ -203,16 +212,30 @@ class PrayerBotPlaybackMixin:
         cb = self._make_schedule_disconnect(guild_id)
         await cb(player, track)
 
-    E2EE_WATCH_INTERVAL = 10.0
+    async def _wait_for_listeners_in_group(self, guild_id: str, vc) -> None:
+        """Give a just-joined listener a moment to enter the E2EE group.
+
+        Someone outside the bot's MLS group cannot decrypt its frames, which is
+        indistinguishable from silence.
+        """
+        listeners = channel_listeners(vc)
+        if listeners and not await wait_until_audible(vc, listeners):
+            log.warning(
+                "Starting playback in guild %s with listeners outside the E2EE group",
+                guild_id,
+            )
+
+    E2EE_WATCH_INTERVAL = 5.0
     E2EE_MAX_REPAIRS = 2
 
     async def _e2ee_watchdog(self, guild_id: str, gen: int) -> None:
-        """Restart the prayer if the voice encryption session dies mid-play.
+        """Keep the prayer decryptable while it plays.
 
-        Discord drops the E2EE session on a websocket reconnect (close code
-        1006) and discord.py keeps playing into it: no errors, no audio.
+        A session can be lost mid-prayer (Discord drops it on a websocket
+        reconnect) and discord.py keeps playing into it: no error, no sound.
         """
         repairs = 0
+        gap_ticks = 0
         try:
             while True:
                 await asyncio.sleep(self.E2EE_WATCH_INTERVAL)
@@ -224,38 +247,33 @@ class PrayerBotPlaybackMixin:
                     return
                 if not player.is_playing():
                     continue
-                conn = getattr(vc, "_connection", None)
-                session = getattr(conn, "dave_session", None) if conn else None
-                if session is None or getattr(conn, "can_encrypt", False):
+                listeners = channel_listeners(vc)
+                missing = missing_from_group(vc, listeners)
+                if is_audible(vc, listeners):
+                    gap_ticks = 0
                     continue
-                # Listeners joining turns the MLS group active; discord.py never
-                # finishes that transition, so finish it before restarting.
-                if is_dave_session_active(session):
-                    complete_dave_transition(conn, session)
-                    if getattr(conn, "can_encrypt", False):
-                        log.info(
-                            "Voice E2EE recovered in guild %s without interrupting playback",
-                            guild_id,
-                        )
+                # A listener who just joined is usually added within a couple of
+                # seconds, so only a gap that survives two ticks is real.
+                gap_ticks += 1
+                if missing and gap_ticks < 2:
                     continue
-                if repairs >= self.E2EE_MAX_REPAIRS:
-                    log.error(
-                        "Voice E2EE keeps failing in guild %s; giving up on repair",
+                if missing:
+                    log.warning(
+                        "Voice E2EE group in guild %s is missing %s — they cannot hear the prayer",
                         guild_id,
+                        missing,
                     )
+                elif self._finish_dave_transition(guild_id, vc, listeners):
+                    continue
+                if not listeners:
+                    # Nobody to hear it and no audience to form a key for:
+                    # keep watching, keep the repair budget for when they come.
+                    gap_ticks = 0
+                    continue
+                if not self._may_restart_prayer(guild_id, repairs):
                     return
                 repairs += 1
-                args = getattr(self, "_session_args", {}).get(guild_id)
-                log.warning(
-                    "Voice E2EE lost in guild %s while playing (status=%s) — reconnecting "
-                    "and restarting the prayer",
-                    guild_id,
-                    getattr(session, "status", None),
-                )
-                getattr(self, "_e2ee_watch_tasks", {}).pop(guild_id, None)
-                if args is None:
-                    return
-                prayer_type, filename = args
+                prayer_type, filename = self._session_args[guild_id]
                 await self._start_prayer_playback(
                     guild_id, prayer_type, filename, is_adhoc=True, with_opener=False
                 )
@@ -264,6 +282,31 @@ class PrayerBotPlaybackMixin:
             raise
         except Exception:
             log.exception("Voice E2EE watchdog failed in guild %s", guild_id)
+
+    def _finish_dave_transition(self, guild_id: str, vc, listeners: list[int]) -> bool:
+        """Complete a pending epoch in place; True when sound came back."""
+        sess = session(vc)
+        if sess is None or not is_dave_session_active(sess):
+            return False
+        complete_dave_transition(connection(vc), sess)
+        if not is_audible(vc, listeners):
+            return False
+        log.info("Voice E2EE recovered in guild %s without interrupting playback", guild_id)
+        return True
+
+    def _may_restart_prayer(self, guild_id: str, repairs: int) -> bool:
+        """Whether a fresh connection is still allowed for this prayer."""
+        if repairs >= self.E2EE_MAX_REPAIRS:
+            log.error("Voice E2EE keeps failing in guild %s; giving up on repair", guild_id)
+            return False
+        if guild_id not in getattr(self, "_session_args", {}):
+            return False
+        log.warning(
+            "Voice E2EE lost in guild %s while playing — reconnecting and restarting the prayer",
+            guild_id,
+        )
+        getattr(self, "_e2ee_watch_tasks", {}).pop(guild_id, None)
+        return True
 
     def _start_e2ee_watchdog(self, guild_id: str, gen: int) -> None:
         self._cancel_e2ee_watchdog(guild_id)
@@ -299,6 +342,9 @@ class PrayerBotPlaybackMixin:
         if vc is None:
             log.error("Cannot play prayer — failed to join voice in guild %s", guild_id)
             return False
+        # Never start speaking to people who are not in the key group: their
+        # clients cannot decrypt it, so the prayer would be silent for them.
+        await self._wait_for_listeners_in_group(guild_id, vc)
         if is_adhoc:
             log.info("Starting adhoc prayer sequence for guild %s", guild_id)
             await asyncio.sleep(5)
@@ -484,5 +530,10 @@ class PrayerBotPlaybackMixin:
                 vc = await self._ensure_voice_connected(guild_id)
                 if vc:
                     player.voice_client = vc
+                    # Speaking before a listener is in the E2EE group is silence
+                    # for them, so wait until Discord has added everyone. Then
+                    # continue from where the prayer stopped — restarting the
+                    # step would send it back to the beginning.
+                    await wait_until_audible(vc, [m.id for m in listeners])
                     await player.resume()
                     log.info("Guild %s: listener joined — resumed", guild_id)
