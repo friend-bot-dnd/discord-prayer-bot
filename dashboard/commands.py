@@ -21,7 +21,7 @@ from db.database import Database
 
 # Whitelist of known commands. Anything else is rejected at write time.
 # Commands + their payload shape:
-#   skip / pause / resume / refresh_playlist  -> no payload
+#   skip / pause / resume                    -> no payload
 #   play_track {"track_id": "<id>"}          -> jump cursor & play immediately
 #   set_volume {"volume_percent": <int>}      -> global volume
 #   apply_server {"guild_id": "<id>"}        -> live-apply a dashboard server
@@ -31,7 +31,6 @@ VALID_COMMANDS = frozenset(
         "skip",
         "pause",
         "resume",
-        "refresh_playlist",
         "play_track",
         "set_volume",
         "apply_server",

@@ -29,6 +29,8 @@ from bot.state_framework import BotState
 from provider.client import FileProviderClient, TrackResponse
 
 log = logging.getLogger(__name__)
+VOLUME_MIN = 50
+VOLUME_MAX = 750
 
 FinishCallback = Callable[["Player", TrackResponse], Awaitable[None]]
 
@@ -276,7 +278,7 @@ class Player:
 
     async def set_volume(self, volume_percent: int) -> int:
         """Persist global gain and restart the active source at its exact position."""
-        volume = min(750, max(50, int(volume_percent)))
+        volume = min(VOLUME_MAX, max(VOLUME_MIN, int(volume_percent)))
         async with self._lock:
             self.state.stream_volume_percent = volume
             # If we are currently playing, restart the source to apply volume

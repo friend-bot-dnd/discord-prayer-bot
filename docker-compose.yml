@@ -12,7 +12,7 @@ services:
       - ./media/prayers:/app/media/prayers
     environment:
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
-      - ADMIN_TOKEN=${ADMIN_TOKEN:-dev-token-change-me}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:?set ADMIN_TOKEN in .env — see .env.example}
       - DATABASE_PATH=/app/data/prayer_bot.db
       - PYTHONPATH=/app
       - GIT_SHA=${GIT_SHA:-unknown}
@@ -32,7 +32,7 @@ services:
     environment:
       - DATABASE_PATH=/app/data/prayer_bot.db
       - PYTHONPATH=/app
-      - ADMIN_TOKEN=${ADMIN_TOKEN:-dev-token-change-me}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:?set ADMIN_TOKEN in .env — see .env.example}
       - GIT_SHA=${GIT_SHA:-unknown}
     restart: unless-stopped
     command: uvicorn dashboard.app:app --host 0.0.0.0 --port 8000

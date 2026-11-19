@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import contextlib
 import hmac
-import os
 import pytz
 from datetime import datetime, time, timedelta
 
@@ -30,7 +29,8 @@ from db.prayers import (
     get_audio_filename,
 )
 from db.prayers import get_guild_config, apply_guild_config
-from dashboard.auth import require_auth
+from bot.prayer_time import next_occurrence
+from dashboard.auth import SESSION_COOKIE_NAME, SESSION_TTL_SECONDS, admin_token, make_session_cookie, require_auth
 from dashboard.health import compute_health
 
 router = APIRouter()
@@ -138,16 +138,16 @@ button { background: #2c3e50; color: #fff; border: none; padding: 10px 20px; bor
 async def login(request: Request):
     form = await request.form()
     token = form.get("token", "")
-    expected = os.environ.get("ADMIN_TOKEN", "dev-token-change-me")
-    if not hmac.compare_digest(str(token), expected):
+    if not hmac.compare_digest(str(token), admin_token()):
         return HTMLResponse("<h2>Invalid token</h2><a href='/login'>Try again</a>", status_code=403)
     response = RedirectResponse("/servers", status_code=302)
     response.set_cookie(
-        key="prayer_session",
-        value=expected,
+        key=SESSION_COOKIE_NAME,
+        value=make_session_cookie(),
         httponly=True,
         samesite="lax",
-        max_age=86400,
+        secure=request.url.scheme == "https",
+        max_age=SESSION_TTL_SECONDS,
     )
     return response
 
@@ -158,8 +158,6 @@ def _format_time_local(t_utc: time, offset_hours: float) -> str:
     total_minutes = (t_utc.hour * 60 + t_utc.minute) + int(offset_hours * 60)
     # Normalize to 0-1439 minutes
     total_minutes = total_minutes % (24 * 60)
-    if total_minutes < 0:
-        total_minutes += 24 * 60
     local_hour = total_minutes // 60
     local_minute = total_minutes % 60
     return f"{local_hour:02d}:{local_minute:02d}"
@@ -274,18 +272,19 @@ async def save_prayers(
                 local_dt = tz.localize(datetime.combine(now.date(), local_t))
                 utc_dt = local_dt.astimezone(pytz.UTC)
                 t = utc_dt.time()
-                
+                offset = utc_dt.utcoffset().total_seconds() / 3600
+
                 if prayer_str:
                     try:
                         pt = PrayerType(prayer_str)
                         db.execute(
-                            "UPDATE prayer_schedules SET time_utc=?, enabled=?, prayer_type=? WHERE id=?",
-                            (t.isoformat(), int(enabled_val), pt.value, s.id),
+                            "UPDATE prayer_schedules SET time_utc=?, enabled=?, prayer_type=?, utc_offset_hours=? WHERE id=?",
+                            (t.isoformat(), int(enabled_val), pt.value, offset, s.id),
                         )
                     except ValueError:
-                        update_schedule(db, s.id, t, enabled_val)
+                        update_schedule(db, s.id, t, enabled_val, offset)
                 else:
-                    update_schedule(db, s.id, t, enabled_val)
+                    update_schedule(db, s.id, t, enabled_val, offset)
             except Exception:
                 pass
 
@@ -440,20 +439,10 @@ async def prayers_public(
     scoped_state = GuildScopedState(db, guild_id)
     is_live = scoped_state.is_connected
 
-    current_weekday = utc_now.weekday()  # 0=Mon
-    current_time = utc_now.time().replace(second=0, microsecond=0)
     next_prayer = None
     if enabled_schedules:
-        best_sched = None
-        best_dt = None
-        for s in enabled_schedules:
-            days_ahead = (s.day_of_week - current_weekday) % 7
-            if days_ahead == 0 and s.time_utc <= current_time:
-                days_ahead = 7
-            prayer_dt = utc_now.replace(hour=s.time_utc.hour, minute=s.time_utc.minute, second=0, microsecond=0) + timedelta(days=days_ahead)
-            if best_dt is None or prayer_dt < best_dt:
-                best_dt = prayer_dt
-                best_sched = s
+        upcoming = next_occurrence(enabled_schedules, utc_now, cfg)
+        best_sched, best_dt = (upcoming[1], upcoming[0]) if upcoming else (None, None)
         if best_sched and best_dt:
             delta = best_dt - utc_now
             total_secs = int(delta.total_seconds())

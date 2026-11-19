@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 
 from bot.apply_server import apply_server_config as live_apply
+from bot.player_framework import VOLUME_MAX, VOLUME_MIN
 from bot.state_framework import GuildScopedState
 from dashboard import commands as cmd_queue
 from db.models import PrayerType
@@ -27,9 +28,13 @@ class PrayerBotCommandsMixin:
             await asyncio.sleep(2)
 
     async def _drain_commands(self) -> None:
-        pending = cmd_queue.pending(self.db)
-        for cmd in pending:
-            result = await self._handle_command(cmd.command, cmd.payload)
+        for cmd in cmd_queue.pending(self.db):
+            try:
+                result = await self._handle_command(cmd.command, cmd.payload)
+            except Exception as exc:
+                # A bad payload must not block every later command forever.
+                log.exception("Command %s failed", cmd.command)
+                result = f"error:{type(exc).__name__}"
             cmd_queue.mark_done(self.db, cmd.command_id, result=result or "ok")
 
     async def _handle_command(self, command: str, payload: dict | None) -> str:
@@ -53,19 +58,20 @@ class PrayerBotCommandsMixin:
                 return "ok:resumed"
             return "error:nothing_to_resume"
         elif command == "set_volume":
-            vol = int(payload.get("volume_percent", 100))
+            try:
+                vol = int(payload.get("volume_percent", 100))
+            except (TypeError, ValueError):
+                return "error:bad_volume"
             if player and guild_id not in self._tts_playing:
                 vol = await player.set_volume(vol)
                 return f"ok:volume:{vol}"
             if guild_id:
-                vol = min(750, max(50, vol))
+                vol = min(VOLUME_MAX, max(VOLUME_MIN, vol))
                 scoped_state = GuildScopedState(self.db, guild_id)
                 scoped_state.stream_volume_percent = vol
                 return f"ok:volume_saved:{vol}"
-            self.bot_state.stream_volume_percent = min(750, max(50, vol))
+            self.bot_state.stream_volume_percent = min(VOLUME_MAX, max(VOLUME_MIN, vol))
             return "ok:volume_saved"
-        elif command == "refresh_playlist":
-            return "ok:noop"
         elif command == "play_track":
             track_id = payload.get("track_id", "")
             if not track_id:
@@ -82,7 +88,9 @@ class PrayerBotCommandsMixin:
                 with_opener = with_opener.lower() != "false"
             else:
                 with_opener = bool(with_opener)
-            success = await self._start_prayer_playback(guild_id, prayer_type, track_id, is_adhoc=True, with_opener=with_opener)
+            success = await self._start_prayer_playback(
+                guild_id, prayer_type, track_id, is_adhoc=True, with_opener=with_opener
+            )
             return "ok:playing" if success else "error:playback_failed"
         elif command == "disconnect":
             if not guild_id:
