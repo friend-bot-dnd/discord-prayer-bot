@@ -113,14 +113,26 @@ method: 'POST',
 headers: {'Content-Type': 'application/x-www-form-urlencoded'},
 body: new URLSearchParams({schedule_id: scheduleId})
 });
-fb.textContent = '✅ Queued';
-fb.className = 'rounded bg-emerald-900/40 border border-emerald-700 px-3 py-2 text-sm text-emerald-200 mb-3';
+const {command_id} = await r.json();
+const okCls = 'rounded bg-emerald-900/40 border border-emerald-700 px-3 py-2 text-sm text-emerald-200 mb-3';
+const errCls = 'rounded bg-red-900/40 border border-red-700 px-3 py-2 text-sm text-red-200 mb-3';
+fb.textContent = '⏳ Queued';
+for (let i = 0; i < 40 && command_id; i++) {
+await new Promise(res => setTimeout(res, 1000));
+const s = await (await fetch('/commands/' + command_id)).json();
+if (!s.done) continue;
+const ok = !!s.result && s.result.startsWith('ok');
+fb.textContent = ok ? '▶ Playing' : '❌ ' + (s.result || 'no response');
+fb.className = ok ? okCls : errCls;
+break;
+}
+fb.className = okCls;
 } catch(e) {
 fb.textContent = '❌ Failed';
 fb.className = 'rounded bg-red-900/40 border border-red-700 px-3 py-2 text-sm text-red-200 mb-3';
 }
 btn.textContent = '▶'; btn.disabled = false;
-setTimeout(() => fb.className = 'hidden', 3000);
+setTimeout(() => fb.className = 'hidden', 6000);
 }
 async function leaveVoice(guildId) {
 const fb = document.getElementById('feedback');
@@ -131,12 +143,12 @@ headers: {'Content-Type': 'application/x-www-form-urlencoded'},
 body: new URLSearchParams({guild_id: guildId, action: 'disconnect'})
 });
 fb.textContent = '🚪 Sent leave command — bot should disconnect shortly';
-fb.className = 'rounded bg-emerald-900/40 border border-emerald-700 px-3 py-2 text-sm text-emerald-200 mb-3';
+fb.className = okCls;
 } catch(e) {
 fb.textContent = '❌ Failed to send leave command';
 fb.className = 'rounded bg-red-900/40 border border-red-700 px-3 py-2 text-sm text-red-200 mb-3';
 }
-setTimeout(() => fb.className = 'hidden', 3000);
+setTimeout(() => fb.className = 'hidden', 6000);
 }
 async function bulkAction(action) {
 const fb = document.getElementById('feedback');

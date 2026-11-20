@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
@@ -12,6 +12,7 @@ from db.models import PrayerType
 from db.prayers import upsert_schedule
 
 GID = "g"
+TOKEN = "test-admin-token"
 
 
 def _db() -> Database:
@@ -56,3 +57,27 @@ def test_public_page_renders_wall_clock_and_zone():
     assert "data-utc-time" not in response.text
 
 
+def test_play_now_reports_back_when_it_finishes(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", TOKEN)
+    db = _db()
+    from db.prayers import get_weekly_schedule
+
+    schedule_id = get_weekly_schedule(db, GID)[0].id
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    client = TestClient(app)
+    headers = {"authorization": f"Bearer {TOKEN}"}
+    try:
+        queued = client.post(
+            "/prayers/adhoc-by-id", headers=headers, data={"schedule_id": schedule_id}
+        ).json()
+        status = client.get(f"/commands/{queued['command_id']}", headers=headers)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert queued["ok"] is True
+    assert status.status_code == 200
+    assert status.json() == {"result": None, "done": False}

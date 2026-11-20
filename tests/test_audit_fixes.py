@@ -7,7 +7,7 @@ import pytest
 
 from bot.prayer_bot_commands import PrayerBotCommandsMixin
 from bot.prayer_scheduler import PrayerScheduler
-from bot.prayer_time import next_occurrence, scheduled_utc
+from bot.prayer_time import next_occurrence
 from dashboard import commands as queue
 from dashboard.auth import (
     DEFAULT_ADMIN_TOKEN,

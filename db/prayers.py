@@ -9,7 +9,7 @@ from db.models import PrayerSchedule, PrayerType, PRAYER_AUDIO_MAP
 
 def get_weekly_schedule(db: Database, guild_id: str) -> List[PrayerSchedule]:
     rows = db.fetchall("""
-        SELECT id, guild_id, day_of_week, prayer_type, time_utc, enabled, created_at, utc_offset_hours
+        SELECT id, guild_id, day_of_week, prayer_type, time_utc, enabled, created_at
         FROM prayer_schedules
         WHERE guild_id = ?
         ORDER BY day_of_week, time_utc
@@ -22,7 +22,6 @@ def get_weekly_schedule(db: Database, guild_id: str) -> List[PrayerSchedule]:
             day_of_week=r["day_of_week"],
             prayer_type=PrayerType(r["prayer_type"]),
             time_utc=time.fromisoformat(r["time_utc"]),
-            utc_offset_hours=r["utc_offset_hours"],
             enabled=bool(r["enabled"]),
             created_at=r["created_at"],
         ))
@@ -35,30 +34,25 @@ def upsert_schedule(
     prayer_type: PrayerType,
     t_utc: time,
     enabled: bool = True,
-    offset_hours: float | None = None,
 ) -> int:
     db.execute("""
-        INSERT INTO prayer_schedules (guild_id, day_of_week, prayer_type, time_utc, enabled, utc_offset_hours)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO prayer_schedules (guild_id, day_of_week, prayer_type, time_utc, enabled)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(guild_id, day_of_week, time_utc) DO UPDATE SET
             enabled = excluded.enabled,
-            prayer_type = excluded.prayer_type,
-            utc_offset_hours = COALESCE(excluded.utc_offset_hours, prayer_schedules.utc_offset_hours)
-    """, (guild_id, day, prayer_type.value, t_utc.isoformat(), int(enabled), offset_hours))
+            prayer_type = excluded.prayer_type
+    """, (guild_id, day, prayer_type.value, t_utc.isoformat(), int(enabled)))
     row = db.fetchone(
         "SELECT id FROM prayer_schedules WHERE guild_id=? AND day_of_week=? AND prayer_type=? AND time_utc=?",
         (guild_id, day, prayer_type.value, t_utc.isoformat()),
     )
     return row["id"] if row else -1
 
-def update_schedule(
-    db: Database, schedule_id: int, t_utc: time, enabled: bool, offset_hours: float | None = None
-) -> None:
-    db.execute("""
-        UPDATE prayer_schedules
-        SET time_utc = ?, enabled = ?, utc_offset_hours = COALESCE(?, utc_offset_hours)
-        WHERE id = ?
-    """, (t_utc.isoformat(), int(enabled), offset_hours, schedule_id))
+def update_schedule(db: Database, schedule_id: int, t_utc: time, enabled: bool) -> None:
+    db.execute(
+        "UPDATE prayer_schedules SET time_utc = ?, enabled = ? WHERE id = ?",
+        (t_utc.isoformat(), int(enabled), schedule_id),
+    )
 
 def log_prayer_played(
     db: Database, guild_id: str, schedule_id: int | None, prayer_type: PrayerType, success: bool

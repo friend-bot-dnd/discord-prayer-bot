@@ -56,7 +56,6 @@ SCHEMA: tuple[str, ...] = (
         time_utc TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        utc_offset_hours REAL,
         UNIQUE(guild_id, day_of_week, time_utc)
     )
     """,
@@ -174,7 +173,6 @@ class PrayerSchedule:
     time_utc: time
     enabled: bool = True
     created_at: Optional[datetime] = None
-    utc_offset_hours: Optional[float] = None
 
 @dataclass(slots=True)
 class PrayerLog:

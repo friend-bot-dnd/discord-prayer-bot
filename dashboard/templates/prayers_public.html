@@ -18,7 +18,8 @@ Now Live
 <div class="text-xs text-indigo-300 uppercase tracking-wider mb-1">Next Prayer</div>
 <div class="text-2xl mb-1">{{ emojis.get(next_prayer.prayer_type, "🕌") }} {{ labels.get(next_prayer.prayer_type, next_prayer.prayer_type | title) }}</div>
 <div class="text-sm text-slate-300">
-<span class="local-time-next" data-iso="{{ next_prayer.utc_iso }}"></span>
+<span>{{ next_prayer.time_utc.strftime('%H:%M') }}</span>
+<span class="text-slate-500">{{ guild_timezone }}</span>
 </div>
 <div class="text-xs text-slate-500 mt-1">{{ next_prayer.dt }}</div>
 <div class="mt-2 inline-block rounded-full bg-indigo-800/60 px-4 py-1 text-sm font-medium text-indigo-200">
@@ -36,19 +37,6 @@ class="w-full rounded-lg bg-slate-800 border border-slate-700 px-4 py-2.5 text-s
 </select>
 </div>
 {% endif %}
-<div class="mb-6 flex flex-wrap items-center gap-3">
-<div class="inline-block rounded-full bg-slate-800 px-4 py-1.5 text-xs text-slate-400" id="tz-badge-container">
-<span>🕐 Perspective:</span>
-<select id="tz-selector" onchange="updatePerspective(this.value)"
-class="bg-transparent border-none text-slate-200 outline-none cursor-pointer">
-<option value="local">Detecting...</option>
-{% for tz in all_timezones %}
-<option value="{{ tz }}">{{ tz }}</option>
-{% endfor %}
-</select>
-</div>
-<span id="tz-info" class="text-[10px] text-slate-600"></span>
-</div>
 {% set emojis = {"buddhist": "☸️", "christian": "✝️", "jewish": "✡️", "sufi": "☪️", "vedantic": "🕉️", "three_daily": "🌅", "psalm_91": "📖"} %}
 {% if schedules_by_day %}
 {% for day in schedules_by_day %}
@@ -76,30 +64,4 @@ href="https://discord.com/channels/{{ guild_id }}/{{ voice_channel_id }}" target
 <p>No prayers scheduled yet. Check back soon!</p>
 </div>
 {% endif %}
-<script>
-// Browser timezone for initial default
-const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-let currentTz = browserTz;
-// Populate "Detecting..." with actual name
-const localOpt = document.querySelector('#tz-selector option[value="local"]');
-if (localOpt) {
-localOpt.textContent = 'Local: ' + browserTz;
-localOpt.value = browserTz;
-}
-document.getElementById('tz-selector').value = browserTz;
-function updatePerspective(newTz) {
-currentTz = newTz;
-// 1. Update upcoming prayer card
-const nextEl = document.querySelector('.local-time-next');
-if (nextEl) {
-const d = new Date(nextEl.dataset.iso);
-const options = { timeZone: currentTz, hour: '2-digit', minute: '2-digit' };
-const localTime = d.toLocaleTimeString('en-US', options);
-const localDay = d.toLocaleDateString('en-US', { timeZone: currentTz, weekday: 'long' });
-const localDate = d.toLocaleDateString('en-US', { timeZone: currentTz, day: 'numeric', month: 'short' });
-nextEl.innerHTML = localTime + ' · ' + localDay + ' ' + localDate + ' <span class="text-slate-500">' + currentTz + '</span>';
-}
-// Init
-updatePerspective(currentTz);
-</script>
 {% endblock %}

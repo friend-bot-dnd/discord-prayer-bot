@@ -22,7 +22,7 @@ from db.prayers import (
 )
 
 from db.prayers import get_guild_config, apply_guild_config
-from bot.prayer_time import next_occurrence
+from bot.prayer_time import next_occurrence, zone_for
 from dashboard.auth import SESSION_COOKIE_NAME, SESSION_TTL_SECONDS, admin_token, make_session_cookie, require_auth
 
 from dashboard.health import compute_health
@@ -252,7 +252,6 @@ async def save_prayers(
                 # Store the wall clock the admin typed; the guild's zone turns it
                 # into an instant, so DST changes do not move the prayer.
                 t = local_t
-                offset = None
 
                 if prayer_str:
                     try:
@@ -262,9 +261,9 @@ async def save_prayers(
                             (t.isoformat(), int(enabled_val), pt.value, s.id),
                         )
                     except ValueError:
-                        update_schedule(db, s.id, t, enabled_val, offset)
+                        update_schedule(db, s.id, t, enabled_val)
                 else:
-                    update_schedule(db, s.id, t, enabled_val, offset)
+                    update_schedule(db, s.id, t, enabled_val)
             except Exception:
                 failures += 1
                 log.warning("schedule %s: save failed", s.id, exc_info=True)
@@ -309,13 +308,22 @@ async def adhoc_play_by_id(
     prayer_type = PrayerType(sched["prayer_type"])
     filename = get_audio_filename(prayer_type)
     from dashboard.commands import enqueue
-    enqueue(db, command="play_track", requested_by="admin", payload={
+    command_id = enqueue(db, command="play_track", requested_by="admin", payload={
         "guild_id": sched["guild_id"],
         "track_id": filename,
         "prayer_type": prayer_type.value,
         "with_opener": opener.lower() != "false",
     })
-    return JSONResponse({"ok": True, "msg": "Queued"})
+    return JSONResponse({"ok": True, "command_id": command_id, "msg": "Queued"})
+
+@router.get("/commands/{command_id}")
+async def command_status(request: Request, command_id: int, db: Database = Depends(get_db)):
+    """Let the admin page tell "queued" from "playing" from "failed"."""
+    require_auth(request)
+    row = db.fetchone("SELECT result, executed_at FROM dashboard_commands WHERE command_id=?", (command_id,))
+    if not row:
+        return JSONResponse({"result": None}, status_code=404)
+    return JSONResponse({"result": row["result"], "done": row["executed_at"] is not None})
 
 @router.post("/prayers/bulk-action")
 async def bulk_action(
@@ -382,6 +390,7 @@ async def prayers_public(
     all_guilds = [{"guild_id": r["guild_id"], "name": r["guild_name"] or r["guild_id"]} for r in guild_rows]
     current_guild_name = cfg.guild_name if cfg else guild_id
     guild_timezone = cfg.timezone_name if cfg and cfg.timezone_name else "UTC"
+    zone = zone_for(guild_timezone)
 
     enabled_schedules = [s for s in schedules if s.enabled]
     days_list = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -413,13 +422,11 @@ async def prayers_public(
                 "prayer_type": best_sched.prayer_type.value,
                 "day_name": days_list[best_sched.day_of_week],
                 "time_utc": best_sched.time_utc,
-                "dt": best_dt.strftime("%a %d %b %Y"),
+                "dt": best_dt.astimezone(zone).strftime("%a %d %b %Y") if zone else best_dt.strftime("%a %d %b %Y"),
                 "utc_iso": best_dt.isoformat(),
                 "in_hours": hours,
                 "in_minutes": minutes,
             }
-
-    all_timezones = pytz.common_timezones
 
     return templates.TemplateResponse(
         request,
@@ -431,7 +438,6 @@ async def prayers_public(
             "schedules_by_day": schedules_by_day,
             "next_prayer": next_prayer,
             "guild_timezone": guild_timezone,
-            "all_timezones": all_timezones,
             "is_live": is_live,
             "voice_channel_id": cfg.voice_channel_id if cfg else "",
         },

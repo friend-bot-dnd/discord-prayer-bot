@@ -1,7 +1,6 @@
 # Discord Prayer Bot
 
-Plays scheduled prayer recordings into Discord voice channels, with a small
-FastAPI dashboard for schedules and server settings.
+Plays scheduled prayer recordings into Discord voice channels, with a small FastAPI dashboard.
 
 ## Run
 
