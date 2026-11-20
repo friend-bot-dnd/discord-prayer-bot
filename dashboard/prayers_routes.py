@@ -140,13 +140,6 @@ async def login(request: Request):
     )
     return response
 
-def _format_time_local(t_utc: time, offset_hours: float) -> str:
-    total_minutes = (t_utc.hour * 60 + t_utc.minute) + int(offset_hours * 60)
-    total_minutes = total_minutes % (24 * 60)
-    local_hour = total_minutes // 60
-    local_minute = total_minutes % 60
-    return f"{local_hour:02d}:{local_minute:02d}"
-
 @router.get("/prayers/{guild_id}", response_class=HTMLResponse)
 async def prayers_admin(
     request: Request,
@@ -423,7 +416,6 @@ async def prayers_public(
                 "day_name": days_list[best_sched.day_of_week],
                 "time_utc": best_sched.time_utc,
                 "dt": best_dt.astimezone(zone).strftime("%a %d %b %Y") if zone else best_dt.strftime("%a %d %b %Y"),
-                "utc_iso": best_dt.isoformat(),
                 "in_hours": hours,
                 "in_minutes": minutes,
             }

@@ -232,6 +232,28 @@ def test_watchdog_repair_is_silent() -> None:
     asyncio.run(_watchdog(conn, CHANNEL_WITH_LISTENER, restarted)._e2ee_watchdog("g", 1))
     assert restarted[0][1]["repair"] is True
 
+def test_failed_repair_pauses_the_track_that_cannot_be_heard() -> None:
+    paused: list[str] = []
+
+    class BrokenPlayer:
+        def is_playing(self) -> bool:
+            return True
+
+        async def pause(self) -> None:
+            paused.append("pause")
+
+    async def failing_repair(*_args, **_kwargs) -> bool:
+        return False
+
+    conn = SimpleNamespace(can_encrypt=False, dave_session=None, dave_protocol_version=0)
+    stub = _watchdog(conn, CHANNEL_WITH_LISTENER, [])
+    stub.players = {"g": BrokenPlayer()}
+    stub._start_prayer_playback = failing_repair
+
+    asyncio.run(stub._e2ee_watchdog("g", 1))
+
+    assert paused == ["pause"]
+
 def test_watchdog_restarts_when_no_session_exists_at_all() -> None:
     restarted: list[tuple] = []
     conn = SimpleNamespace(can_encrypt=False, dave_session=None, dave_protocol_version=0)

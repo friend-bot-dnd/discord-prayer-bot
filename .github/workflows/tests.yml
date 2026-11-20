@@ -36,6 +36,6 @@ jobs:
           python-version: "3.12"
       - name: Install ruff
         run: pip install ruff==0.17.6
-      # Errors only: style debt is tracked separately, undefined names are not.
-      - name: Ruff (F, E9)
-        run: ruff check --select F,E9 .
+      # Undefined names, syntax errors, and statements that do nothing.
+      - name: Ruff (F, E9, B018)
+        run: ruff check --select F,E9,B018 .

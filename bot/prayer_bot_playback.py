@@ -261,7 +261,7 @@ class PrayerBotPlaybackMixin:
                     player = self.players.get(guild_id)
                     if player is not None:
                         with contextlib.suppress(Exception):
-                            player.pause()
+                            await player.pause()
                     log.error(
                         "Voice E2EE repair failed in %s — paused; the room cannot decrypt", guild_id
                     )

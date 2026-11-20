@@ -529,7 +529,7 @@ def test_replay_starts_from_opener():
 def test_psalm_91_has_no_opener_on_every_path():
     for with_opener in (True, False):
         assert len(session_plan(PrayerType.PSALM_91, with_opener=with_opener)) == 1
-    from dashboard.prayers_routes import adhoc_play  # noqa: import smoke
+    from dashboard.prayers_routes import adhoc_play  # noqa: F401 - import smoke
     assert adhoc_play is not None
 
 def test_three_daily_plays_opener_once_runner():
