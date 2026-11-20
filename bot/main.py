@@ -13,6 +13,7 @@ from bot.daily_draw_runtime import DailyDrawV2Mixin
 from bot.prayer_bot_runtime import PrayerBotRuntimeMixin
 from bot.prayer_play_hooks import install as install_play_hooks
 from bot.state_framework import BotState
+from bot.voice_e2ee import install_dave_transition_bridge
 from db.database import Database
 
 if TYPE_CHECKING:
@@ -68,6 +69,7 @@ class PrayerBot(DailyDrawV2Mixin, PrayerBotRuntimeMixin, discord.Client):
         return os.environ.get("PRAYER_DRAW_LOG_PATH", "./data/daily_draw_log.txt")
 
 install_play_hooks(PrayerBot)
+install_dave_transition_bridge()
 
 async def main() -> None:
     if not TOKEN:

@@ -22,13 +22,9 @@ from bot.prayer_time import next_occurrence
 from bot.state_framework import GuildScopedState
 from bot.voice_e2ee import (
     channel_listeners,
-    complete_dave_transition,
-    connection,
     is_audible,
     LISTENER_WAIT_SECONDS,
-    is_dave_session_active,
     missing_from_group,
-    session,
     wait_for_listener,
     wait_until_audible,
 )
@@ -230,9 +226,6 @@ class PrayerBotPlaybackMixin:
     async def _e2ee_watchdog(self, guild_id: str, gen: int) -> None:
         repairs = 0
         gap_ticks = 0
-        start_vc = self.voice_connections.get(guild_id)
-        start_session = session(start_vc) if start_vc is not None else None
-        epoch = getattr(start_session, "epoch", None)
         try:
             while True:
                 await asyncio.sleep(self.E2EE_WATCH_INTERVAL)
@@ -242,10 +235,9 @@ class PrayerBotPlaybackMixin:
                 vc = self.voice_connections.get(guild_id)
                 if player is None or vc is None or not vc.is_connected():
                     return
-                listeners = channel_listeners(vc)
-                epoch = self._ensure_media_keys(guild_id, vc, epoch, listeners)
                 if not player.is_playing():
                     continue
+                listeners = channel_listeners(vc)
                 missing = missing_from_group(vc, listeners)
                 if is_audible(vc, listeners):
                     gap_ticks = 0
@@ -270,20 +262,6 @@ class PrayerBotPlaybackMixin:
             raise
         except Exception:
             log.exception("E2EE watchdog failed in %s", guild_id)
-
-    def _ensure_media_keys(
-        self, guild_id: str, vc, epoch: int | None, listeners: list[int]
-    ) -> int | None:
-        sess = session(vc)
-        if sess is None or not is_dave_session_active(sess):
-            return epoch
-        current = getattr(sess, "epoch", None)
-        stale = epoch is not None and current != epoch
-        stranded = listeners and not missing_from_group(vc, listeners) and not is_audible(vc, listeners)
-        if stale or stranded:
-            complete_dave_transition(connection(vc), sess)
-            log.info("Keys refreshed in %s at epoch %s", guild_id, current)
-        return current
 
     def _may_restart_prayer(self, guild_id: str, repairs: int) -> bool:
         if repairs >= self.E2EE_MAX_REPAIRS:

@@ -7,6 +7,7 @@ import pytest
 
 from bot.voice_e2ee import (
     ensure_voice_encryption_ready,
+    install_dave_transition_bridge,
     is_audible,
     missing_from_group,
     wait_until_audible,
@@ -143,45 +144,24 @@ def test_ready_without_a_privacy_code_is_still_trusted() -> None:
     )
     assert session.calls == []
 
-def test_active_session_without_keys_finishes_the_transition() -> None:
-    session = FakeSession(flip_on_prepare=True)
-    conn = FakeConn(session)
-
-    assert _ready(conn, timeout=2.0) is True
-    assert ("prepare", 0, 1) in session.calls
-    assert ("passthrough", False) in session.calls
-    assert conn.can_encrypt is True
-
-def test_transition_is_attempted_only_once_while_waiting() -> None:
-    session = FakeSession(flip_on_prepare=False)
+def test_active_session_without_keys_is_not_audible() -> None:
+    session = FakeSession()
     conn = FakeConn(session)
 
     assert _ready(conn, **FAST) is False
-    prepares = [call for call in session.calls if call[0] == "prepare"]
-    assert len(prepares) == 1
+    assert session.calls == []
 
-def test_session_that_never_becomes_active_times_out_without_preparing() -> None:
-    session = FakeSession(status="pending", flip_on_prepare=True)
+def test_session_that_never_becomes_active_times_out() -> None:
+    session = FakeSession(status="pending")
     conn = FakeConn(session)
 
     assert _ready(conn, **dict(FAST, timeout=0.15)) is False
     assert session.calls == []
 
-def test_prepare_failure_is_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = FakeSession()
-
-    def boom(*_args, **_kwargs):
-        raise RuntimeError("mls state is gone")
-
-    monkeypatch.setattr(session, "prepare_transition", boom)
-    conn = FakeConn(session)
-
-    assert _ready(conn, **dict(FAST, timeout=0.15)) is False
-
 def test_stuck_session_is_escalated_to_a_fresh_connection() -> None:
     stuck = FakeConn(FakeSession(status="pending"))
-    healthy_session = FakeSession(flip_on_prepare=True)
-    healthy = FakeConn(healthy_session)
+    healthy = FakeConn(FakeSession())
+    healthy.can_encrypt = True
 
     calls: list[int] = []
 
@@ -276,17 +256,18 @@ def test_watchdog_waits_for_an_audience_before_repairing() -> None:
 
     assert restarted == []
 
-def test_watchdog_finishes_transition_instead_of_restarting() -> None:
+def test_watchdog_leaves_a_healthy_room_alone() -> None:
     restarted: list[tuple] = []
-    session = FakeSession(flip_on_prepare=True)
+    session = FakeSession()
+    session.user_ids = [1]
     conn = FakeConn(session)
+    conn.can_encrypt = True
     watchdog = _watchdog(conn, CHANNEL_WITH_LISTENER, restarted)._e2ee_watchdog("g", 1)
     with pytest.raises(asyncio.TimeoutError):
         asyncio.run(asyncio.wait_for(watchdog, timeout=0.2))
 
     assert restarted == []
-    assert conn.can_encrypt is True
-    assert [call for call in session.calls if call[0] == "prepare"]
+    assert session.calls == []
 
 def test_dissolved_group_is_not_audible_even_though_it_can_encrypt() -> None:
     session = FakeSession(status="pending")
@@ -384,35 +365,45 @@ def test_playback_starts_only_when_the_listener_is_inside_the_key_group() -> Non
     live = SimpleNamespace(_connection=conn, channel=CHANNEL_WITH_LISTENER)
     assert asyncio.run(Stub()._wait_for_listeners_in_group("1", live)) is live
 
-def test_wait_until_audible_completes_the_dave_transition() -> None:
-    session = FakeSession(flip_on_prepare=True)
-    conn = FakeConn(session)
-    vc = SimpleNamespace(_connection=conn, channel=CHANNEL_WITH_LISTENER)
+def test_bridge_installs_the_new_epoch_keys_before_acking() -> None:
+    install_dave_transition_bridge()
+    from discord.gateway import DiscordVoiceWebSocket
 
-    assert asyncio.run(wait_until_audible(vc, [1], timeout=1.0)) is True
-    assert conn.can_encrypt is True
-    assert [call for call in session.calls if call[0] == "prepare"]
-
-def test_watchdog_rekeys_when_the_group_epoch_changes() -> None:
-    restarted: list[tuple] = []
     session = FakeSession()
-    session.user_ids = [1]
-    conn = FakeConn(session)
-    conn.can_encrypt = True
-    watchdog = _watchdog(conn, CHANNEL_WITH_LISTENER, restarted)
+    state = SimpleNamespace(dave_session=session, dave_pending_transitions={7: 1})
+    sent: list[dict] = []
 
-    async def run() -> None:
-        task = asyncio.create_task(watchdog._e2ee_watchdog("g", 1))
-        await asyncio.sleep(0.03)
-        session.epoch = 2
-        await asyncio.sleep(0.05)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    class Socket:
+        _connection = state
 
-    asyncio.run(run())
+        async def send_as_json(self, payload):
+            sent.append(payload)
 
-    assert [call for call in session.calls if call[0] == "prepare"]
-    assert restarted == []
+    asyncio.run(DiscordVoiceWebSocket.send_transition_ready(Socket(), 7))
+
+    assert ("prepare", 7, 1) in session.calls
+    assert sent[0]["d"] == {"transition_id": 7}
+
+def test_bridge_executes_the_transition_on_the_dave_session() -> None:
+    install_dave_transition_bridge()
+    from discord.voice_state import VoiceConnectionState
+
+    session = FakeSession()
+    state = SimpleNamespace(
+        dave_session=session,
+        dave_pending_transitions={5: 1},
+        dave_protocol_version=1,
+        dave_downgraded=False,
+    )
+    asyncio.run(VoiceConnectionState._execute_transition(state, 5))
+
+    assert session.calls == [("execute", 5)]
+
+def test_bridge_is_installed_once() -> None:
+    install_dave_transition_bridge()
+    from discord.gateway import DiscordVoiceWebSocket
+
+    patched = DiscordVoiceWebSocket.send_transition_ready
+    install_dave_transition_bridge()
+
+    assert DiscordVoiceWebSocket.send_transition_ready is patched

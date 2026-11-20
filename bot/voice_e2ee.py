@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -25,6 +26,43 @@ def can_encrypt(vc: Any) -> bool:
 
 def is_dave_session_active(session_: Any) -> bool:
     return str(getattr(session_, "status", "")).rsplit(".", 1)[-1].lower() == "active"
+
+def install_dave_transition_bridge() -> None:
+    """Hand the DAVE transitions to davey, which discord.py leaves half done.
+
+    The gateway announces every group change as a transition; discord.py acks
+    it without telling the davey session, so the new epoch's key ratchet is
+    never installed and the bot keeps encrypting with the previous one. A
+    listener who joins later then decrypts nothing, which is the scheduled
+    prayer going silent for everyone who was not already in the room.
+    """
+    from discord.gateway import DiscordVoiceWebSocket
+    from discord.voice_state import VoiceConnectionState
+
+    if getattr(VoiceConnectionState, "_prayer_dave_bridge", False):
+        return
+
+    ready = DiscordVoiceWebSocket.send_transition_ready
+    execute = VoiceConnectionState._execute_transition
+
+    async def send_transition_ready(self, transition_id: int) -> None:
+        state = self._connection
+        sess = getattr(state, "dave_session", None)
+        version = state.dave_pending_transitions.get(transition_id)
+        if sess is not None and version is not None:
+            with suppress(Exception):
+                sess.prepare_transition(transition_id, version)
+        await ready(self, transition_id)
+
+    async def _execute_transition(self, transition_id: int) -> None:
+        await execute(self, transition_id)
+        if self.dave_session is not None:
+            with suppress(Exception):
+                self.dave_session.execute_transition(transition_id)
+
+    DiscordVoiceWebSocket.send_transition_ready = send_transition_ready
+    VoiceConnectionState._execute_transition = _execute_transition
+    VoiceConnectionState._prayer_dave_bridge = True
 
 def group_members(vc: Any) -> set[int]:
     sess = session(vc)
@@ -75,17 +113,7 @@ async def wait_until_audible(
     wanted = [int(uid) for uid in member_ids]
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
-    transition_done = False
     while not is_audible(vc, wanted):
-        sess = session(vc)
-        if not transition_done and sess is not None and is_dave_session_active(sess) and not can_encrypt(vc):
-            complete_dave_transition(connection(vc), sess)
-            transition_done = True
-            log.info(
-                "Completed DAVE transition at epoch %s so the room can decrypt",
-                getattr(sess, "epoch", None),
-            )
-            continue
         if loop.time() >= deadline:
             log.warning(
                 "Voice cannot reach %s after %.1fs; they may hear nothing",
@@ -96,26 +124,11 @@ async def wait_until_audible(
         await asyncio.sleep(poll_interval)
     return True
 
-def complete_dave_transition(conn: Any, session_: Any) -> None:
-    steps = (
-        ("prepare_transition", (0, getattr(conn, "dave_protocol_version", 1))),
-        ("execute_transition", (0,)),
-        ("set_passthrough_mode", (False,)),
-    )
-    for name, args in steps:
-        try:
-            getattr(session_, name)(*args)
-        except Exception as exc:  # noqa: BLE001 - never break playback
-            log.debug("DAVE %s failed: %s", name, exc)
-            if name == "prepare_transition":
-                return
-
 async def _wait_until_encrypting(vc: Any, timeout: float, poll_interval: float) -> bool:
     loop = asyncio.get_running_loop()
     started = loop.time()
     deadline = started + timeout
     no_session_deadline = min(deadline, started + NO_SESSION_GRACE)
-    transition_tried = False
 
     while True:
         sess = session(vc)
@@ -134,10 +147,6 @@ async def _wait_until_encrypting(vc: Any, timeout: float, poll_interval: float) 
                     getattr(connection(vc), "dave_protocol_version", 0),
                 )
                 return False
-        elif is_dave_session_active(sess) and not transition_tried:
-            transition_tried = True
-            complete_dave_transition(connection(vc), sess)
-            continue
         elif loop.time() >= deadline:
             log.warning(
                 "Voice E2EE session not ready after %.1fs (status=%s, epoch=%s)",
