@@ -407,3 +407,23 @@ def test_bridge_is_installed_once() -> None:
     install_dave_transition_bridge()
 
     assert DiscordVoiceWebSocket.send_transition_ready is patched
+
+def test_bridge_reinstalls_keys_when_a_group_reforms_with_transition_zero() -> None:
+    install_dave_transition_bridge()
+    from discord.gateway import DiscordVoiceWebSocket
+
+    session = FakeSession()
+    session.process_welcome = lambda *_args: None
+    state = SimpleNamespace(
+        dave_session=session, dave_pending_transitions={}, dave_protocol_version=1
+    )
+
+    class Socket:
+        _connection = state
+        def __getattr__(self, name: str):
+            return getattr(DiscordVoiceWebSocket, name)
+
+    frame = b"\x00\x00" + bytes([DiscordVoiceWebSocket.MLS_WELCOME]) + b"\x00\x00welcome"
+    asyncio.run(DiscordVoiceWebSocket.received_binary_message(Socket(), frame))
+
+    assert session.calls == [("prepare", 0, 1)]

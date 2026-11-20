@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import struct
 from contextlib import suppress
 from typing import Any
 
@@ -44,6 +45,12 @@ def install_dave_transition_bridge() -> None:
 
     ready = DiscordVoiceWebSocket.send_transition_ready
     execute = VoiceConnectionState._execute_transition
+    binary = DiscordVoiceWebSocket.received_binary_message
+    # MLS opcodes whose transition id 0 means "apply the new group right away".
+    immediates = (
+        DiscordVoiceWebSocket.MLS_ANNOUNCE_COMMIT_TRANSITION,
+        DiscordVoiceWebSocket.MLS_WELCOME,
+    )
 
     async def send_transition_ready(self, transition_id: int) -> None:
         state = self._connection
@@ -52,6 +59,7 @@ def install_dave_transition_bridge() -> None:
         if sess is not None and version is not None:
             with suppress(Exception):
                 sess.prepare_transition(transition_id, version)
+            log.debug("DAVE transition %s prepared for protocol %s", transition_id, version)
         await ready(self, transition_id)
 
     async def _execute_transition(self, transition_id: int) -> None:
@@ -59,8 +67,28 @@ def install_dave_transition_bridge() -> None:
         if self.dave_session is not None:
             with suppress(Exception):
                 self.dave_session.execute_transition(transition_id)
+            log.debug("DAVE transition %s executed", transition_id)
+
+    async def received_binary_message(self, msg: bytes) -> None:
+        state = self._connection
+        sess = getattr(state, "dave_session", None)
+        immediate = (
+            sess is not None
+            and len(msg) > 4
+            and msg[2] in immediates
+            and struct.unpack_from(">H", msg, 3)[0] == 0
+        )
+        await binary(self, msg)
+        if immediate and sess is not None:
+            # davey only derives the new epoch's keys in prepare_transition, so a
+            # commit or welcome that arrives with transition id 0 (the room was
+            # empty and Discord re-formed the group) has to install them here.
+            with suppress(Exception):
+                sess.prepare_transition(0, state.dave_protocol_version)
+            log.debug("DAVE group re-formed without a handshake — keys re-installed")
 
     DiscordVoiceWebSocket.send_transition_ready = send_transition_ready
+    DiscordVoiceWebSocket.received_binary_message = received_binary_message
     VoiceConnectionState._execute_transition = _execute_transition
     VoiceConnectionState._prayer_dave_bridge = True
 
