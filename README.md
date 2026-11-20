@@ -15,8 +15,7 @@ Dashboard: `127.0.0.1:8700`, behind a reverse proxy.
 
 ## Layout
 
-- `bot/` scheduler, voice playback, TTS, commands; `db/` SQLite (WAL, shared by both containers)
-- `dashboard/` admin pages; `media/prayers/` audio (Git LFS)
+`bot/` scheduler, voice, TTS, commands; `db/` SQLite (WAL, shared); `dashboard/` admin pages; `media/prayers/` audio (Git LFS).
 
 ## Time and voice
 
@@ -30,7 +29,4 @@ Needs **Server Members Intent** and **Send Messages** in the draw channel.
 
 ## Tests
 
-```bash
-pip install -r requirements-dev.txt
-pytest tests/ -q
-```
+`pip install -r requirements-dev.txt && pytest -q`

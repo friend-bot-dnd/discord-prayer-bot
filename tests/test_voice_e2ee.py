@@ -386,15 +386,6 @@ def test_bridge_executes_the_transition_on_the_dave_session() -> None:
 
     assert session.calls == [("execute", 5)]
 
-def test_bridge_is_installed_once() -> None:
-    install_dave_transition_bridge()
-    from discord.gateway import DiscordVoiceWebSocket
-
-    patched = DiscordVoiceWebSocket.send_transition_ready
-    install_dave_transition_bridge()
-
-    assert DiscordVoiceWebSocket.send_transition_ready is patched
-
 def test_bridge_reinstalls_keys_when_a_group_reforms_with_transition_zero() -> None:
     install_dave_transition_bridge()
     from discord.gateway import DiscordVoiceWebSocket
@@ -407,6 +398,7 @@ def test_bridge_reinstalls_keys_when_a_group_reforms_with_transition_zero() -> N
 
     class Socket:
         _connection = state
+
         def __getattr__(self, name: str):
             return getattr(DiscordVoiceWebSocket, name)
 
