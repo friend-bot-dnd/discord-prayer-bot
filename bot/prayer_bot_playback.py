@@ -208,21 +208,28 @@ class PrayerBotPlaybackMixin:
         cb = self._make_schedule_disconnect(guild_id)
         await cb(player, track)
 
-    AUDIBILITY_WAIT_SECONDS = 60.0
+    AUDIBILITY_WAIT_SECONDS = 20.0
 
-    async def _wait_for_listeners_in_group(self, guild_id: str, vc) -> bool:
+    async def _wait_for_listeners_in_group(self, guild_id: str, vc):
         listeners = await wait_for_listener(vc, LISTENER_WAIT_SECONDS)
         if not listeners:
             log.warning("Nobody joined guild %s in %ss — prayer skipped", guild_id, int(LISTENER_WAIT_SECONDS))
-            return False
+            return None
         if await wait_until_audible(vc, listeners, timeout=self.AUDIBILITY_WAIT_SECONDS):
-            return True
-        log.error(
-            "Voice is not encrypting in guild %s — refusing to play, listeners outside the key group: %s",
-            guild_id,
-            missing_from_group(vc, listeners),
-        )
-        return False
+            return vc
+        conn = connection(vc)
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                await conn.reinit_dave_session()
+            log.warning("Voice E2EE stuck in guild %s — republished key package", guild_id)
+            if await wait_until_audible(vc, listeners, timeout=self.AUDIBILITY_WAIT_SECONDS):
+                return vc
+        log.warning("Voice E2EE still not ready in guild %s — rejoining once", guild_id)
+        fresh = await self._reconnect_voice(guild_id)
+        if fresh is not None and await wait_until_audible(fresh, listeners, timeout=self.AUDIBILITY_WAIT_SECONDS):
+            return fresh
+        log.error("Not encrypting in guild %s — not playing (outside key group: %s)", guild_id, missing_from_group(fresh or vc, listeners))
+        return None
 
     E2EE_WATCH_INTERVAL = 5.0
     E2EE_MAX_REPAIRS = 2
@@ -330,7 +337,8 @@ class PrayerBotPlaybackMixin:
         if vc is None:
             log.error("Cannot play prayer — failed to join voice in guild %s", guild_id)
             return False
-        if not await self._wait_for_listeners_in_group(guild_id, vc):
+        vc = await self._wait_for_listeners_in_group(guild_id, vc)
+        if vc is None:
             return False
         if is_adhoc:
             log.info("Starting adhoc prayer sequence for guild %s", guild_id)

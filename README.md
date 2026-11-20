@@ -11,14 +11,12 @@ make up                   # bot + dashboard
 make logs
 ```
 
-The dashboard listens on `127.0.0.1:8700`; keep it behind a reverse proxy.
+Dashboard: `127.0.0.1:8700` — keep it behind a reverse proxy.
 
 ## Layout
 
-- `bot/` — scheduler, voice playback, TTS, Discord commands
-- `db/` — SQLite layer (WAL; shared by both containers)
-- `dashboard/` — admin pages (schedules, servers, history)
-- `media/prayers/` — audio (Git LFS)
+- `bot/` scheduler, voice playback, TTS, commands; `db/` SQLite (WAL, shared by both containers)
+- `dashboard/` admin pages; `media/prayers/` audio (Git LFS)
 
 ## Time
 

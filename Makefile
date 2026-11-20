@@ -1,6 +1,6 @@
 COMPOSE ?= docker compose
 
-.PHONY: env build up down restart logs ps health test lint clean
+.PHONY: env build up down restart logs health test lint clean
 
 env:
 	@mkdir -p data media
@@ -20,9 +20,6 @@ restart:
 
 logs:
 	$(COMPOSE) logs -f --tail=100
-
-ps:
-	$(COMPOSE) ps
 
 health:
 	@$(COMPOSE) ps --format 'table {{.Service}}\t{{.Status}}'

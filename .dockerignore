@@ -1,18 +1,14 @@
-# Never bake secrets, history or local state into the image.
 .env
 .env.*
 !.env.example
 .git
 .github
-.venv
 .venv*
 data
 media
 tests
-cypress
 docs
 **/__pycache__
 *.pyc
 .pytest_cache
 *.db
-node_modules

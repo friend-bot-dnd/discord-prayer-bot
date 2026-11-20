@@ -8,5 +8,4 @@
 - Config: pinned deps, dev requirements split out, `.dockerignore`, non-root image, CI actions pinned, image has a default command.
 
 ## Earlier
-- Prayer session opener, 91st Psalm, pre-join/post-stay, TTS greetings and blessings, per-server voices, history, bulk enable/disable, `/start`, `/exit`, `/next`, `/help`.
-- Daily ticket draw: persistent button, 18h cooldown, append-only log.
+Prayer session opener, 91st Psalm, pre-join/post-stay, TTS greetings, per-server voices, history, bulk enable/disable, `/start`, `/exit`, `/next`, `/help`, and the daily ticket draw.
