@@ -75,7 +75,17 @@ async def wait_until_audible(
     wanted = [int(uid) for uid in member_ids]
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
+    transition_done = False
     while not is_audible(vc, wanted):
+        sess = session(vc)
+        if not transition_done and sess is not None and is_dave_session_active(sess) and not can_encrypt(vc):
+            complete_dave_transition(connection(vc), sess)
+            transition_done = True
+            log.info(
+                "Completed DAVE transition at epoch %s so the room can decrypt",
+                getattr(sess, "epoch", None),
+            )
+            continue
         if loop.time() >= deadline:
             log.warning(
                 "Voice cannot reach %s after %.1fs; they may hear nothing",

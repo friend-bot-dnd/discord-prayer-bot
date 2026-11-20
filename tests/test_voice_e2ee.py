@@ -371,12 +371,8 @@ def test_listener_rejoining_does_not_reconnect_the_bot(monkeypatch) -> None:
 def test_playback_starts_only_when_the_listener_is_inside_the_key_group() -> None:
     from bot.prayer_bot_playback import PrayerBotPlaybackMixin
 
-    async def no_reconnect(guild_id: str):
-        return None
-
     class Stub(PrayerBotPlaybackMixin):
         AUDIBILITY_WAIT_SECONDS = 0.15
-        _reconnect_voice = staticmethod(no_reconnect)
 
     dead = SimpleNamespace(_connection=FakeConn(FakeSession()), channel=CHANNEL_WITH_LISTENER)
     assert asyncio.run(Stub()._wait_for_listeners_in_group("1", dead)) is None
@@ -388,25 +384,11 @@ def test_playback_starts_only_when_the_listener_is_inside_the_key_group() -> Non
     live = SimpleNamespace(_connection=conn, channel=CHANNEL_WITH_LISTENER)
     assert asyncio.run(Stub()._wait_for_listeners_in_group("1", live)) is live
 
-def test_stuck_session_is_healed_before_any_audio() -> None:
-    from bot.prayer_bot_playback import PrayerBotPlaybackMixin
-
-    stuck = SimpleNamespace(_connection=FakeConn(FakeSession(status="pending")),
-                            channel=CHANNEL_WITH_LISTENER)
-    session = FakeSession()
-    session.user_ids = [1]
+def test_wait_until_audible_completes_the_dave_transition() -> None:
+    session = FakeSession(flip_on_prepare=True)
     conn = FakeConn(session)
-    conn.can_encrypt = True
-    fresh = SimpleNamespace(_connection=conn, channel=CHANNEL_WITH_LISTENER)
-    rejoins: list[str] = []
+    vc = SimpleNamespace(_connection=conn, channel=CHANNEL_WITH_LISTENER)
 
-    async def heal(guild_id: str):
-        rejoins.append(guild_id)
-        return fresh
-
-    class Stub(PrayerBotPlaybackMixin):
-        AUDIBILITY_WAIT_SECONDS = 0.1
-        _reconnect_voice = staticmethod(heal)
-
-    assert asyncio.run(Stub()._wait_for_listeners_in_group("1", stuck)) is fresh
-    assert rejoins == ["1"]
+    assert asyncio.run(wait_until_audible(vc, [1], timeout=1.0)) is True
+    assert conn.can_encrypt is True
+    assert [call for call in session.calls if call[0] == "prepare"]

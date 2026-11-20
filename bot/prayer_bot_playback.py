@@ -217,18 +217,11 @@ class PrayerBotPlaybackMixin:
             return None
         if await wait_until_audible(vc, listeners, timeout=self.AUDIBILITY_WAIT_SECONDS):
             return vc
-        conn = connection(vc)
-        if conn is not None:
-            with contextlib.suppress(Exception):
-                await conn.reinit_dave_session()
-            log.warning("Voice E2EE stuck in guild %s — republished key package", guild_id)
-            if await wait_until_audible(vc, listeners, timeout=self.AUDIBILITY_WAIT_SECONDS):
-                return vc
-        log.warning("Voice E2EE still not ready in guild %s — rejoining once", guild_id)
-        fresh = await self._reconnect_voice(guild_id)
-        if fresh is not None and await wait_until_audible(fresh, listeners, timeout=self.AUDIBILITY_WAIT_SECONDS):
-            return fresh
-        log.error("Not encrypting in guild %s — not playing (outside key group: %s)", guild_id, missing_from_group(fresh or vc, listeners))
+        log.error(
+            "Not encrypting in guild %s — not playing (outside key group: %s)",
+            guild_id,
+            missing_from_group(vc, listeners),
+        )
         return None
 
     E2EE_WATCH_INTERVAL = 5.0
