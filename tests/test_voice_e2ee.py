@@ -392,3 +392,27 @@ def test_wait_until_audible_completes_the_dave_transition() -> None:
     assert asyncio.run(wait_until_audible(vc, [1], timeout=1.0)) is True
     assert conn.can_encrypt is True
     assert [call for call in session.calls if call[0] == "prepare"]
+
+def test_watchdog_rekeys_when_the_group_epoch_changes() -> None:
+    restarted: list[tuple] = []
+    session = FakeSession()
+    session.user_ids = [1]
+    conn = FakeConn(session)
+    conn.can_encrypt = True
+    watchdog = _watchdog(conn, CHANNEL_WITH_LISTENER, restarted)
+
+    async def run() -> None:
+        task = asyncio.create_task(watchdog._e2ee_watchdog("g", 1))
+        await asyncio.sleep(0.03)
+        session.epoch = 2
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+
+    assert [call for call in session.calls if call[0] == "prepare"]
+    assert restarted == []

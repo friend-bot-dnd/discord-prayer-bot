@@ -218,7 +218,7 @@ class PrayerBotPlaybackMixin:
         if await wait_until_audible(vc, listeners, timeout=self.AUDIBILITY_WAIT_SECONDS):
             return vc
         log.error(
-            "Not encrypting in guild %s — not playing (outside key group: %s)",
+            "Not encrypting in %s — not playing (outside key group: %s)",
             guild_id,
             missing_from_group(vc, listeners),
         )
@@ -230,6 +230,9 @@ class PrayerBotPlaybackMixin:
     async def _e2ee_watchdog(self, guild_id: str, gen: int) -> None:
         repairs = 0
         gap_ticks = 0
+        start_vc = self.voice_connections.get(guild_id)
+        start_session = session(start_vc) if start_vc is not None else None
+        epoch = getattr(start_session, "epoch", None)
         try:
             while True:
                 await asyncio.sleep(self.E2EE_WATCH_INTERVAL)
@@ -239,9 +242,10 @@ class PrayerBotPlaybackMixin:
                 vc = self.voice_connections.get(guild_id)
                 if player is None or vc is None or not vc.is_connected():
                     return
+                listeners = channel_listeners(vc)
+                epoch = self._ensure_media_keys(guild_id, vc, epoch, listeners)
                 if not player.is_playing():
                     continue
-                listeners = channel_listeners(vc)
                 missing = missing_from_group(vc, listeners)
                 if is_audible(vc, listeners):
                     gap_ticks = 0
@@ -250,13 +254,7 @@ class PrayerBotPlaybackMixin:
                 if missing and gap_ticks < 2:
                     continue
                 if missing:
-                    log.warning(
-                        "Voice E2EE group in guild %s is missing %s — they cannot hear the prayer",
-                        guild_id,
-                        missing,
-                    )
-                elif self._finish_dave_transition(guild_id, vc, listeners):
-                    continue
+                    log.warning("Voice E2EE group in %s is missing %s — they cannot hear", guild_id, missing)
                 if not listeners:
                     gap_ticks = 0
                     continue
@@ -271,17 +269,21 @@ class PrayerBotPlaybackMixin:
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.exception("Voice E2EE watchdog failed in guild %s", guild_id)
+            log.exception("E2EE watchdog failed in %s", guild_id)
 
-    def _finish_dave_transition(self, guild_id: str, vc, listeners: list[int]) -> bool:
+    def _ensure_media_keys(
+        self, guild_id: str, vc, epoch: int | None, listeners: list[int]
+    ) -> int | None:
         sess = session(vc)
         if sess is None or not is_dave_session_active(sess):
-            return False
-        complete_dave_transition(connection(vc), sess)
-        if not is_audible(vc, listeners):
-            return False
-        log.info("Voice E2EE recovered in guild %s without interrupting playback", guild_id)
-        return True
+            return epoch
+        current = getattr(sess, "epoch", None)
+        stale = epoch is not None and current != epoch
+        stranded = listeners and not missing_from_group(vc, listeners) and not is_audible(vc, listeners)
+        if stale or stranded:
+            complete_dave_transition(connection(vc), sess)
+            log.info("Keys refreshed in %s at epoch %s", guild_id, current)
+        return current
 
     def _may_restart_prayer(self, guild_id: str, repairs: int) -> bool:
         if repairs >= self.E2EE_MAX_REPAIRS:

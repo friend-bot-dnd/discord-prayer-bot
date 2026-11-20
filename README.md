@@ -6,7 +6,7 @@ FastAPI dashboard for schedules and server settings.
 ## Run
 
 ```bash
-cp .env.example .env      # set DISCORD_BOT_TOKEN and ADMIN_TOKEN
+cp .env.example .env      # set the two tokens
 make up                   # bot + dashboard
 make logs
 ```
@@ -18,24 +18,13 @@ Dashboard: `127.0.0.1:8700` — keep it behind a reverse proxy.
 - `bot/` scheduler, voice playback, TTS, commands; `db/` SQLite (WAL, shared by both containers)
 - `dashboard/` admin pages; `media/prayers/` audio (Git LFS)
 
-## Time
+## Time and voice
 
-Every schedule is stored as UTC plus the offset it was saved at, so a prayer
-keeps the wall-clock time the admin chose across DST changes. One clock rule
-lives in `bot/prayer_time.py`.
-
-## Voice
-
-Prayer audio travels inside Discord's E2EE (DAVE) session. A room with nobody
-in it has no key group, so the bot waits for a listener before it starts and
-pauses the moment the room empties. See `bot/voice_e2ee.py`.
+Schedules keep their wall clock across DST (UTC + saved offset, `bot/prayer_time.py`). Audio rides Discord's E2EE (DAVE) session: the bot waits for a listener, pauses when the room empties, and re-installs media keys when the group epoch changes (`bot/voice_e2ee.py`).
 
 ## Daily ticket draw
 
-Once per local day the bot posts a **Draw your ticket** button. A draw picks a
-random member of the configured role (drawer excluded), replies privately, and
-adds a heart; cooldown is 18h. Draw rows are logged before the reply is sent —
-keep that ordering.
+Once per local day the bot posts a **Draw your ticket** button: a random member of the configured role (drawer excluded) gets a private reply and a heart, cooldown 18h. Rows are logged before the reply — keep that order.
 
 Needs **Server Members Intent** and **Send Messages** in the draw channel.
 
