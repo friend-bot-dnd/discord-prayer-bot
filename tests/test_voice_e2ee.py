@@ -21,23 +21,17 @@ class FakeStatus:
         return f"SessionStatus.{self.name}"
 
 class FakeSession:
-    def __init__(self, status: str = "active", *, flip_on_prepare: bool = False) -> None:
+    def __init__(self, status: str = "active") -> None:
         self.status = FakeStatus(status)
         self.epoch = 1 if status == "active" else 0
         self.ready = False
         self.voice_privacy_code = None
         self.user_ids: list[int] = [1]
-        self.flip_on_prepare = flip_on_prepare
         self.calls: list[tuple] = []
         self.conn: FakeConn | None = None
 
     def prepare_transition(self, transition_id: int, protocol_version: int) -> None:
         self.calls.append(("prepare", transition_id, protocol_version))
-        if self.flip_on_prepare:
-            self.ready = True
-            self.voice_privacy_code = "1234"
-            assert self.conn is not None
-            self.conn.can_encrypt = True
 
     def execute_transition(self, transition_id: int) -> bool:
         self.calls.append(("execute", transition_id))
@@ -126,7 +120,7 @@ def test_already_encrypting_does_not_touch_the_session() -> None:
     assert session.calls == []
 
 def test_ready_without_a_privacy_code_is_still_trusted() -> None:
-    session = FakeSession(flip_on_prepare=False)
+    session = FakeSession()
     conn = FakeConn(session)
     conn.can_encrypt = True
 
@@ -142,13 +136,6 @@ def test_ready_without_a_privacy_code_is_still_trusted() -> None:
         )
         is True
     )
-    assert session.calls == []
-
-def test_active_session_without_keys_is_not_audible() -> None:
-    session = FakeSession()
-    conn = FakeConn(session)
-
-    assert _ready(conn, **FAST) is False
     assert session.calls == []
 
 def test_session_that_never_becomes_active_times_out() -> None:

@@ -11,7 +11,7 @@ make up                   # bot + dashboard
 make logs
 ```
 
-Dashboard: `127.0.0.1:8700` — keep it behind a reverse proxy.
+Dashboard: `127.0.0.1:8700`, behind a reverse proxy.
 
 ## Layout
 

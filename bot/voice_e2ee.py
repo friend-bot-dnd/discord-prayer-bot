@@ -29,13 +29,11 @@ def is_dave_session_active(session_: Any) -> bool:
     return str(getattr(session_, "status", "")).rsplit(".", 1)[-1].lower() == "active"
 
 def install_dave_transition_bridge() -> None:
-    """Hand the DAVE transitions to davey, which discord.py leaves half done.
+    """Finish the DAVE handshake discord.py leaves half done.
 
-    The gateway announces every group change as a transition; discord.py acks
-    it without telling the davey session, so the new epoch's key ratchet is
-    never installed and the bot keeps encrypting with the previous one. A
-    listener who joins later then decrypts nothing, which is the scheduled
-    prayer going silent for everyone who was not already in the room.
+    It acks every transition without telling davey, so the new epoch's keys
+    are never derived and the bot keeps encrypting with dead ones: whoever
+    joins later hears silence.
     """
     from discord.gateway import DiscordVoiceWebSocket
     from discord.voice_state import VoiceConnectionState
@@ -46,7 +44,6 @@ def install_dave_transition_bridge() -> None:
     ready = DiscordVoiceWebSocket.send_transition_ready
     execute = VoiceConnectionState._execute_transition
     binary = DiscordVoiceWebSocket.received_binary_message
-    # MLS opcodes whose transition id 0 means "apply the new group right away".
     immediates = (
         DiscordVoiceWebSocket.MLS_ANNOUNCE_COMMIT_TRANSITION,
         DiscordVoiceWebSocket.MLS_WELCOME,
