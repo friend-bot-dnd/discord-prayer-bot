@@ -191,6 +191,7 @@ async def prayers_admin(
             "schedules": existing,
             "current_volume": current_volume,
             "all_timezones": all_timezones,
+            "guild_timezone": cfg.timezone_name if cfg and cfg.timezone_name else "UTC",
             "get_audio_filename": get_audio_filename,
         },
     )
@@ -212,7 +213,11 @@ async def save_prayers(
     except pytz.UnknownTimeZoneError:
         flash = urllib.parse.quote("Unknown timezone — nothing saved")
         return RedirectResponse(f"/prayers/{guild_id}?flash={flash}", status_code=303)
-    db.execute("UPDATE guild_configs SET timezone_name = ? WHERE guild_id = ?", (timezone_name, guild_id))
+    db.execute(
+        "INSERT INTO guild_configs (guild_id, timezone_name) VALUES (?, ?) "
+        "ON CONFLICT(guild_id) DO UPDATE SET timezone_name = excluded.timezone_name",
+        (guild_id, timezone_name),
+    )
 
     seen: dict[str, set[str]] = {}
     failures = 0
@@ -376,7 +381,7 @@ async def prayers_public(
     guild_rows = db.fetchall("SELECT guild_id, guild_name FROM guild_configs ORDER BY guild_name, guild_id")
     all_guilds = [{"guild_id": r["guild_id"], "name": r["guild_name"] or r["guild_id"]} for r in guild_rows]
     current_guild_name = cfg.guild_name if cfg else guild_id
-    cfg.timezone_name if cfg and cfg.timezone_name else "UTC"
+    guild_timezone = cfg.timezone_name if cfg and cfg.timezone_name else "UTC"
 
     enabled_schedules = [s for s in schedules if s.enabled]
     days_list = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -398,7 +403,7 @@ async def prayers_public(
     next_prayer = None
     if enabled_schedules:
         upcoming = next_occurrence(enabled_schedules, cfg, utc_now)
-        best_sched, best_dt = (upcoming[1], upcoming[0]) if upcoming else (None, None)
+        best_sched, best_dt = upcoming if upcoming else (None, None)
         if best_sched and best_dt:
             delta = best_dt - utc_now
             total_secs = int(delta.total_seconds())
@@ -425,6 +430,7 @@ async def prayers_public(
             "all_guilds": all_guilds,
             "schedules_by_day": schedules_by_day,
             "next_prayer": next_prayer,
+            "guild_timezone": guild_timezone,
             "all_timezones": all_timezones,
             "is_live": is_live,
             "voice_channel_id": cfg.voice_channel_id if cfg else "",

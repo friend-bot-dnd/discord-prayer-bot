@@ -281,6 +281,18 @@ def test_dissolved_group_is_not_audible_even_though_it_can_encrypt() -> None:
 
     assert is_audible(vc, [1]) is False
 
+def _upcoming_db(guild_id: str):
+    from datetime import UTC, datetime
+
+    from db.database import Database
+    from db.models import PrayerType
+    from db.prayers import upsert_schedule
+
+    db = Database(":memory:")
+    soon = datetime.now(UTC)
+    upsert_schedule(db, guild_id, soon.weekday(), PrayerType.PSALM_91, soon.time(), enabled=True)
+    return db
+
 def test_listener_rejoining_does_not_reconnect_the_bot(monkeypatch) -> None:
     from bot import prayer_bot_playback as pb
 
@@ -314,7 +326,7 @@ def test_listener_rejoining_does_not_reconnect_the_bot(monkeypatch) -> None:
         raise AssertionError("a rejoining listener must not reconnect the bot")
 
     class Stub(pb.PrayerBotPlaybackMixin):
-        db = None
+        db = _upcoming_db("1")
         players = {"1": player}
         voice_connections = {"1": vc}
         _tts_playing: set[str] = set()
@@ -330,9 +342,6 @@ def test_listener_rejoining_does_not_reconnect_the_bot(monkeypatch) -> None:
 
         def _get_listening_channel(self, guild_id: str):
             return channel
-
-        def _get_next_prayer_minutes(self, guild_id: str):
-            return None
 
     member = SimpleNamespace(
         bot=False, id=42, name="lak", display_name="lak", guild=SimpleNamespace(id=1)

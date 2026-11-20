@@ -19,7 +19,7 @@ class="text-xs rounded bg-red-900/50 hover:bg-red-800/50 border border-red-800/5
 </div>
 <div class="text-xs text-slate-500 mb-4 flex items-center gap-2">
 <span>🕐 Local Timezone:</span>
-<select id="tz-selector" name="timezone_name" form="schedule-form" onchange="updatePerspective(this.value)"
+<select id="tz-selector" name="timezone_name" form="schedule-form"
 class="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-xs text-slate-300 outline-none focus:border-indigo-500">
 <option value="local">Detecting...</option>
 {% for tz in all_timezones %}
@@ -80,7 +80,7 @@ class="text-[10px] rounded bg-slate-800 hover:bg-slate-700 border border-slate-7
 <span class="text-xs text-slate-600 w-4">{{ slot_num + 1 }}</span>
 <input type="time" name="time_{{ sched.id if sched else 'new_' + day_idx|string + '_' + slot_num|string }}"
 class="time-inp bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs w-24"
-value="{{ sched.time_utc if sched else '' }}" data-id="{{ sched.id if sched else '' }}" data-utc="{{ sched.time_utc if sched else '' }}">
+value="{{ sched.time_utc if sched else '' }}" data-id="{{ sched.id if sched else '' }}" >
 <select name="prayer_{{ sched.id if sched else 'new_' + day_idx|string + '_' + slot_num|string }}"
 class="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs">
 <option value="">— none —</option>
@@ -101,37 +101,9 @@ class="text-emerald-500 hover:text-emerald-400 text-xs px-1" title="Play Now">�
 <button type="submit" class="w-full rounded bg-indigo-600 hover:bg-indigo-500 py-3 text-sm font-medium mt-2">Save Schedule</button>
 </form>
 <script>
-// Browser timezone for initial default
-const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-let currentTz = browserTz;
-// Populate "Detecting..." with actual name
-const localOpt = document.querySelector('#tz-selector option[value="local"]');
-if (localOpt) {
-localOpt.textContent = 'Local: ' + browserTz;
-localOpt.value = browserTz;
-}
-document.getElementById('tz-selector').value = browserTz;
-function updatePerspective(newTz) {
-currentTz = newTz;
-// Re-render all inputs from their UTC source using client-side display only
-// The official "save" now happens server-side for DST accuracy
-document.querySelectorAll('.time-inp').forEach(inp => {
-if (!inp.dataset.utc) return;
-const [h,m] = inp.dataset.utc.split(':').map(Number);
-const d = new Date();
-d.setUTCHours(h, m, 0, 0);
-// Display using browser/selected timezone
-const localStr = d.toLocaleTimeString('en-US', { timeZone: currentTz, hour12: false, hour: '2-digit', minute: '2-digit' });
-inp.value = localStr;
-});
-}
-// Init
-updatePerspective(currentTz);
-// Submit: simply send the local values, server handles UTC conversion based on timezone_name
-document.getElementById('schedule-form').addEventListener('submit', function(e) {
-// No client-side conversion needed anymore
-this.submit();
-});
+// Times are wall clock in the guild's zone; nothing to convert here.
+document.getElementById('tz-selector').value = {{ guild_timezone | tojson }};
+// Submit: the server stores these wall-clock values against the chosen zone
 async function playNow(btn, scheduleId) {
 btn.textContent = '⋯'; btn.disabled = true;
 const fb = document.getElementById('feedback');

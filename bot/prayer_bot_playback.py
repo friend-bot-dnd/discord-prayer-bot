@@ -256,9 +256,15 @@ class PrayerBotPlaybackMixin:
                     return
                 prayer_type, filename = self._session_args[guild_id]
                 if not await self._start_prayer_playback(
-                    guild_id, prayer_type, filename, repair=True
+                    guild_id, prayer_type, filename, repair=True, with_opener=False
                 ):
-                    log.error("Voice E2EE repair failed in %s — leaving the room paused", guild_id)
+                    player = self.players.get(guild_id)
+                    if player is not None:
+                        with contextlib.suppress(Exception):
+                            player.pause()
+                    log.error(
+                        "Voice E2EE repair failed in %s — paused; the room cannot decrypt", guild_id
+                    )
                 return
         except asyncio.CancelledError:
             raise
@@ -397,7 +403,7 @@ class PrayerBotPlaybackMixin:
         )
         if upcoming is None:
             return None
-        prayer_dt, schedule = upcoming
+        schedule, prayer_dt = upcoming
         delta = prayer_dt - now
         return {
             "schedule": schedule,

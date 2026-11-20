@@ -85,14 +85,19 @@ class PrayerBotCommandsMixin:
                 with_opener = with_opener.lower() != "false"
             else:
                 with_opener = bool(with_opener)
+            def _report(task: asyncio.Task) -> None:
+                if task.cancelled():
+                    return
+                exc = task.exception()
+                if exc is not None:
+                    log.error("Play Now failed in guild %s: %s", guild_id, exc, exc_info=exc)
+
             task = asyncio.create_task(
                 self._start_prayer_playback(
                     guild_id, prayer_type, track_id, is_adhoc=True, with_opener=with_opener
                 )
             )
-            task.add_done_callback(
-                lambda t: t.exception() and log.error("Play Now failed in guild %s", guild_id, exc_info=t.exception())
-            )
+            task.add_done_callback(_report)
             return "ok:starting"
         elif command == "disconnect":
             if not guild_id:

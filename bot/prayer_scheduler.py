@@ -59,7 +59,8 @@ class PrayerScheduler:
         upcoming = next_occurrence(get_weekly_schedule(self.db, self.guild_id), cfg, now)
         if upcoming is None:
             return False
-        return now < upcoming[0] <= now + timedelta(minutes=pre_join_mins)
+        _, when = upcoming
+        return now < when <= now + timedelta(minutes=pre_join_mins)
 
     async def start(self) -> None:
         if self._running:

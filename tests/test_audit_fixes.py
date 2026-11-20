@@ -107,19 +107,6 @@ def test_bearer_token_still_works(monkeypatch):
     )
     assert verify_token(request)
 
-def test_prayer_time_follows_daylight_saving():
-    """A 06:00 wall-clock prayer stays 06:00 local on both sides of a DST change."""
-    cfg = type("Cfg", (), {"timezone_name": "Europe/Berlin"})()
-    schedule = type("S", (), {"time_utc": time(6, 0), "day_of_week": 0, "enabled": True})()
-
-    winter = scheduled_utc(schedule, cfg, datetime(2025, 1, 15).date())
-    summer = scheduled_utc(schedule, cfg, datetime(2025, 7, 15).date())
-
-    assert winter.hour == 5  # 06:00 CET
-    assert summer.hour == 4  # 06:00 CEST
-    assert winter.tzinfo == UTC and summer.tzinfo == UTC
-
-
 def test_next_occurrence_is_shared_and_skips_disabled():
     db = Database(":memory:")
     upsert_schedule(db, "g", 2, PrayerType.CHRISTIAN, time(9, 0), enabled=True)

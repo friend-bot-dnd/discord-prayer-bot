@@ -1,4 +1,3 @@
-"""The dashboard save path must store a wall clock the scheduler can resolve."""
 from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 

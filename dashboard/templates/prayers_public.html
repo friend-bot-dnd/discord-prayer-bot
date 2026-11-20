@@ -55,13 +55,13 @@ class="bg-transparent border-none text-slate-200 outline-none cursor-pointer">
 <div class="mb-6">
 <div class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">{{ day.day_name }}</div>
 {% for row in day.schedules %}
-<div class="flex items-center gap-3 rounded-lg bg-slate-900 border border-slate-800 p-3 mb-1.5 hover:border-slate-700 transition" data-utc-time="{{ row.schedule.time_utc }}">
+<div class="flex items-center gap-3 rounded-lg bg-slate-900 border border-slate-800 p-3 mb-1.5 hover:border-slate-700 transition">
 <div class="text-xl w-8 text-center">{{ emojis.get(row.schedule.prayer_type.value, "🙏") }}</div>
 <div class="flex-1 min-w-0">
 <div class="font-medium text-sm">{{ row.schedule.prayer_type.value | title }}</div>
 <div class="text-xs text-slate-400">
-<span class="local-time">{{ row.local_time_str }}</span>
-<span class="text-slate-600 ml-1">UTC {{ row.schedule.time_utc }}</span>
+<span class="local-time">{{ row.schedule.time_utc.strftime('%H:%M') }}</span>
+<span class="text-slate-600 ml-1">{{ guild_timezone }}</span>
 </div>
 </div>
 <a class="rounded-full bg-indigo-600 hover:bg-indigo-500 px-3 py-1 text-xs font-medium no-underline"
@@ -98,16 +98,6 @@ const localTime = d.toLocaleTimeString('en-US', options);
 const localDay = d.toLocaleDateString('en-US', { timeZone: currentTz, weekday: 'long' });
 const localDate = d.toLocaleDateString('en-US', { timeZone: currentTz, day: 'numeric', month: 'short' });
 nextEl.innerHTML = localTime + ' · ' + localDay + ' ' + localDate + ' <span class="text-slate-500">' + currentTz + '</span>';
-}
-// 2. Update schedule cards from their UTC source
-document.querySelectorAll('[data-utc-time]').forEach(card => {
-const [h, m] = card.dataset.utcTime.split(':').map(Number);
-const d = new Date();
-d.setUTCHours(h, m, 0, 0);
-// Display using selected timezone
-const localStr = d.toLocaleTimeString('en-US', { timeZone: currentTz, hour12: false, hour: '2-digit', minute: '2-digit' });
-card.querySelector('.local-time').textContent = localStr;
-});
 }
 // Init
 updatePerspective(currentTz);
