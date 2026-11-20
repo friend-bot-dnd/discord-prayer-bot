@@ -207,8 +207,12 @@ async def save_prayers(
     schedules = get_weekly_schedule(db, guild_id)
 
     import pytz
-    tz = pytz.timezone(timezone_name)
-    now = datetime.now(tz)  # guild-local date, so DST is decided in the guild's zone
+    try:
+        pytz.timezone(timezone_name)
+    except pytz.UnknownTimeZoneError:
+        flash = urllib.parse.quote("Unknown timezone — nothing saved")
+        return RedirectResponse(f"/prayers/{guild_id}?flash={flash}", status_code=303)
+    db.execute("UPDATE guild_configs SET timezone_name = ? WHERE guild_id = ?", (timezone_name, guild_id))
 
     seen: dict[str, set[str]] = {}
     failures = 0
@@ -218,10 +222,7 @@ async def save_prayers(
             continue
 
         try:
-            local_t = time.fromisoformat(local_time_str)
-            local_dt = tz.localize(datetime.combine(now.date(), local_t))
-            utc_dt = local_dt.astimezone(pytz.UTC)
-            utc_t_str = utc_dt.time().isoformat()
+            wall_str = time.fromisoformat(local_time_str).isoformat()
         except Exception:
             failures += 1
             log.warning("schedule %s: unreadable time %r", s.id, local_time_str, exc_info=True)
@@ -230,10 +231,10 @@ async def save_prayers(
         day = str(s.day_of_week)
         if day not in seen:
             seen[day] = set()
-        if utc_t_str in seen[day]:
+        if wall_str in seen[day]:
             msg = urllib.parse.quote("Duplicate times on same day")
             return RedirectResponse(f"/prayers/{guild_id}?flash={msg}", status_code=303)
-        seen[day].add(utc_t_str)
+        seen[day].add(wall_str)
 
     for s in schedules:
         local_time_str = form_data.get(f"time_{s.id}")
@@ -243,17 +244,17 @@ async def save_prayers(
         if local_time_str:
             try:
                 local_t = time.fromisoformat(local_time_str)
-                local_dt = tz.localize(datetime.combine(now.date(), local_t))
-                utc_dt = local_dt.astimezone(pytz.UTC)
-                t = utc_dt.time()
-                offset = utc_dt.utcoffset().total_seconds() / 3600
+                # Store the wall clock the admin typed; the guild's zone turns it
+                # into an instant, so DST changes do not move the prayer.
+                t = local_t
+                offset = None
 
                 if prayer_str:
                     try:
                         pt = PrayerType(prayer_str)
                         db.execute(
-                            "UPDATE prayer_schedules SET time_utc=?, enabled=?, prayer_type=?, utc_offset_hours=? WHERE id=?",
-                            (t.isoformat(), int(enabled_val), pt.value, offset, s.id),
+                            "UPDATE prayer_schedules SET time_utc=?, enabled=?, prayer_type=? WHERE id=?",
+                            (t.isoformat(), int(enabled_val), pt.value, s.id),
                         )
                     except ValueError:
                         update_schedule(db, s.id, t, enabled_val, offset)
@@ -396,7 +397,7 @@ async def prayers_public(
 
     next_prayer = None
     if enabled_schedules:
-        upcoming = next_occurrence(enabled_schedules, utc_now, cfg)
+        upcoming = next_occurrence(enabled_schedules, cfg, utc_now)
         best_sched, best_dt = (upcoming[1], upcoming[0]) if upcoming else (None, None)
         if best_sched and best_dt:
             delta = best_dt - utc_now

@@ -198,6 +198,8 @@ class PrayerBotPlaybackMixin:
             return
         getattr(self, "_session_tasks", {}).pop(guild_id, None)
         getattr(self, "_session_state", {}).pop(guild_id, None)
+        getattr(self, "_session_args", {}).pop(guild_id, None)
+        getattr(self, "_e2ee_repairs", {}).pop(guild_id, None)
         self._cancel_e2ee_watchdog(guild_id)
         if player is None:
             player = self.players.get(guild_id)
@@ -224,7 +226,6 @@ class PrayerBotPlaybackMixin:
     E2EE_MAX_REPAIRS = 2
 
     async def _e2ee_watchdog(self, guild_id: str, gen: int) -> None:
-        repairs = 0
         gap_ticks = 0
         try:
             while True:
@@ -241,6 +242,7 @@ class PrayerBotPlaybackMixin:
                 missing = missing_from_group(vc, listeners)
                 if is_audible(vc, listeners):
                     gap_ticks = 0
+                    getattr(self, "_e2ee_repairs", {}).pop(guild_id, None)
                     continue
                 gap_ticks += 1
                 if missing and gap_ticks < 2:
@@ -250,29 +252,30 @@ class PrayerBotPlaybackMixin:
                 if not listeners:
                     gap_ticks = 0
                     continue
-                if not self._may_restart_prayer(guild_id, repairs):
+                if not self._may_restart_prayer(guild_id):
                     return
-                repairs += 1
                 prayer_type, filename = self._session_args[guild_id]
-                await self._start_prayer_playback(
-                    guild_id, prayer_type, filename, is_adhoc=True, with_opener=False
-                )
+                if not await self._start_prayer_playback(
+                    guild_id, prayer_type, filename, repair=True
+                ):
+                    log.error("Voice E2EE repair failed in %s — leaving the room paused", guild_id)
                 return
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("E2EE watchdog failed in %s", guild_id)
 
-    def _may_restart_prayer(self, guild_id: str, repairs: int) -> bool:
-        if repairs >= self.E2EE_MAX_REPAIRS:
-            log.error("Voice E2EE keeps failing in guild %s; giving up on repair", guild_id)
-            return False
+    def _may_restart_prayer(self, guild_id: str) -> bool:
         if guild_id not in getattr(self, "_session_args", {}):
             return False
-        log.warning(
-            "Voice E2EE lost in guild %s while playing — reconnecting and restarting the prayer",
-            guild_id,
-        )
+        if not hasattr(self, "_e2ee_repairs"):
+            self._e2ee_repairs = {}
+        repairs = self._e2ee_repairs.get(guild_id, 0)
+        if repairs >= self.E2EE_MAX_REPAIRS:
+            log.error("Voice E2EE keeps failing in %s after %s repairs; giving up", guild_id, repairs)
+            return False
+        self._e2ee_repairs[guild_id] = repairs + 1
+        log.warning("Voice E2EE lost in %s — repair %s/%s", guild_id, repairs + 1, self.E2EE_MAX_REPAIRS)
         getattr(self, "_e2ee_watch_tasks", {}).pop(guild_id, None)
         return True
 
@@ -287,7 +290,7 @@ class PrayerBotPlaybackMixin:
         if task is not None and not task.done():
             task.cancel()
 
-    async def _start_prayer_playback(self, guild_id: str, prayer_type: PrayerType, filename: str, is_adhoc: bool = False, *, with_opener: bool = True) -> bool:
+    async def _start_prayer_playback(self, guild_id: str, prayer_type: PrayerType, filename: str, is_adhoc: bool = False, *, with_opener: bool = True, repair: bool = False) -> bool:
         plan = session_plan(prayer_type, with_opener=with_opener)
         if filename != plan[-1].filename and not any(s.filename == filename for s in plan):
             log.warning("Ignoring stale filename '%s' for guild %s, using session plan", filename, guild_id)
@@ -313,7 +316,7 @@ class PrayerBotPlaybackMixin:
         vc = await self._wait_for_listeners_in_group(guild_id, vc)
         if vc is None:
             return False
-        if is_adhoc:
+        if is_adhoc and not repair:
             log.info("Starting adhoc prayer sequence for guild %s", guild_id)
             await asyncio.sleep(5)
             announce_done = asyncio.Event()
@@ -340,7 +343,7 @@ class PrayerBotPlaybackMixin:
         else:
             player.voice_client = vc
         cfg = get_guild_config(self.db, guild_id)
-        if cfg and cfg.text_channel_id:
+        if cfg and cfg.text_channel_id and not repair:
             guild = self.get_guild(int(guild_id))
             if guild:
                 text_channel = guild.get_channel(int(cfg.text_channel_id))
@@ -373,9 +376,12 @@ class PrayerBotPlaybackMixin:
         if not hasattr(self, "_session_args"):
             self._session_args = {}
         self._session_args[guild_id] = (prayer_type, filename)
+        if not repair:
+            getattr(self, "_e2ee_repairs", {}).pop(guild_id, None)
         self._start_e2ee_watchdog(guild_id, gen)
         log.info("Playing %s in guild %s (will disconnect after stay duration)", prayer_type.value, guild_id)
-        await self._log_to_channel(guild_id, f"Started playing **{prayer_type.value.title()}** prayer.")
+        if not repair:
+            await self._log_to_channel(guild_id, f"Started playing **{prayer_type.value.title()}** prayer.")
         return True
 
     async def _play_prayer_callback(self, guild_id: str, prayer_type: PrayerType, filename: str) -> bool:
@@ -387,7 +393,7 @@ class PrayerBotPlaybackMixin:
     def _get_next_prayer_info(self, guild_id: str) -> dict | None:
         now = datetime.now(pytz.UTC)
         upcoming = next_occurrence(
-            get_weekly_schedule(self.db, guild_id), now, get_guild_config(self.db, guild_id)
+            get_weekly_schedule(self.db, guild_id), get_guild_config(self.db, guild_id), now
         )
         if upcoming is None:
             return None
@@ -483,6 +489,11 @@ class PrayerBotPlaybackMixin:
                 listeners_ids = [m.id for m in listeners]
                 if vc is not None and vc.is_connected():
                     player.voice_client = vc
-                    await wait_until_audible(vc, listeners_ids)
-                    await player.resume()
-                    log.info("Guild %s: listener joined — resumed", guild_id)
+                    if await wait_until_audible(vc, listeners_ids):
+                        await player.resume()
+                        log.info("Guild %s: listener joined — resumed", guild_id)
+                    else:
+                        log.warning(
+                            "Guild %s: listener joined but the room cannot decrypt yet — staying paused",
+                            guild_id,
+                        )

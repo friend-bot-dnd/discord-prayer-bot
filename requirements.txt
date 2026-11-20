@@ -3,6 +3,11 @@ uvicorn[standard]==0.54.0
 jinja2==3.1.6
 python-multipart==0.0.34
 discord.py[voice]==2.7.1
+# discord.py 2.7.1 still speaks the davey 0.1 handshake (it derives the group keys
+# inside process_commit). davey 0.2 moved that into prepare_transition, which the
+# library never calls, so 0.2 leaves the bot sending with dead keys. Keep <0.2
+# until Discord.py supports it: Rapptz/discord.py#10548, #10557.
+davey>=0.1.0,<0.2.0
 pytz==2026.6
 httpx==0.28.1
 edge-tts==7.3.1

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import struct
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -27,71 +26,6 @@ def can_encrypt(vc: Any) -> bool:
 def is_dave_session_active(session_: Any) -> bool:
     return str(getattr(session_, "status", "")).rsplit(".", 1)[-1].lower() == "active"
 
-def install_dave_transition_bridge() -> bool:
-    """Finish the DAVE handshake discord.py leaves half done: it acks every
-    transition without telling davey, so the new epoch's keys are never derived
-    and whoever joins later hears silence. Delete when #10557 is fixed.
-    """
-    from discord.gateway import DiscordVoiceWebSocket
-    from discord.voice_state import VoiceConnectionState
-
-    if getattr(VoiceConnectionState, "_prayer_dave_bridge", False):
-        return False
-
-    try:
-        ready = DiscordVoiceWebSocket.send_transition_ready
-        execute = VoiceConnectionState._execute_transition
-        binary = DiscordVoiceWebSocket.received_binary_message
-        immediates = (DiscordVoiceWebSocket.MLS_ANNOUNCE_COMMIT_TRANSITION, DiscordVoiceWebSocket.MLS_WELCOME)
-    except AttributeError:
-        log.warning("Voice keys fix not applied: discord.py internals moved (see #10557)")
-        return False
-
-    async def send_transition_ready(self, transition_id: int) -> None:
-        state = self._connection
-        sess = getattr(state, "dave_session", None)
-        version = state.dave_pending_transitions.get(transition_id)
-        if sess is not None and version is not None:
-            _prepare(sess, transition_id, version)
-        await ready(self, transition_id)
-
-    async def _execute_transition(self, transition_id: int) -> None:
-        await execute(self, transition_id)
-        if self.dave_session is not None:
-            try:
-                self.dave_session.execute_transition(transition_id)
-            except Exception as exc:  # noqa: BLE001 - a stale key must not stop playback
-                log.debug("DAVE execute %s failed: %s", transition_id, exc)
-
-    async def received_binary_message(self, msg: bytes) -> None:
-        state = self._connection
-        sess = getattr(state, "dave_session", None)
-        immediate = (
-            sess is not None
-            and len(msg) > 4
-            and msg[2] in immediates
-            and struct.unpack_from(">H", msg, 3)[0] == 0
-        )
-        await binary(self, msg)
-        if immediate and sess is not None:
-            # davey only derives the new epoch's keys in prepare_transition, so a
-            # commit or welcome that arrives with transition id 0 (the room was
-            # empty and Discord re-formed the group) has to install them here.
-            _prepare(sess, 0, state.dave_protocol_version)
-            log.debug("DAVE group re-formed without a handshake — keys re-installed")
-
-    DiscordVoiceWebSocket.send_transition_ready = send_transition_ready
-    DiscordVoiceWebSocket.received_binary_message = received_binary_message
-    VoiceConnectionState._execute_transition = _execute_transition
-    VoiceConnectionState._prayer_dave_bridge = True
-    return True
-
-def _prepare(sess: Any, transition_id: int, version: int) -> None:
-    try:
-        sess.prepare_transition(transition_id, version)
-    except Exception as exc:  # noqa: BLE001 - a stale key must not stop playback
-        log.debug("DAVE prepare %s failed: %s", transition_id, exc)
-
 def group_members(vc: Any) -> set[int]:
     sess = session(vc)
     if sess is None:
@@ -115,8 +49,6 @@ def is_audible(vc: Any, member_ids: Any = None) -> bool:
         return False
     sess = session(vc)
     if sess is None or not is_dave_session_active(sess):
-        return False
-    if int(getattr(sess, "epoch", 0) or 0) <= 0:
         return False
     wanted = channel_listeners(vc) if member_ids is None else [int(u) for u in member_ids]
     return not missing_from_group(vc, wanted)

@@ -13,13 +13,9 @@ make logs
 
 Dashboard: `127.0.0.1:8700`, behind a reverse proxy.
 
-## Layout
-
-`bot/` scheduler, voice, TTS, commands; `db/` SQLite (WAL, shared); `dashboard/` admin pages; `media/prayers/` audio (Git LFS).
-
 ## Time and voice
 
-Schedules keep their wall clock across DST (UTC + saved offset, `bot/prayer_time.py`). Audio rides Discord's E2EE (DAVE) session: the bot waits for a listener, pauses when the room empties, and re-installs media keys when the group epoch changes (`bot/voice_e2ee.py`).
+A schedule stores the wall clock you typed plus the guild's zone, so a DST change does not move the prayer (`bot/prayer_time.py`). Audio rides Discord's E2EE session: the bot waits for a listener and restarts once if the room cannot decrypt (`bot/voice_e2ee.py`). `davey` is pinned `<0.2`: 0.2 derives keys in a call discord.py 2.7.1 never makes.
 
 ## Daily ticket draw
 

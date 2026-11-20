@@ -1,40 +1,46 @@
+"""Turn a stored weekly schedule into the next UTC instant, in the guild's zone."""
+
 from __future__ import annotations
 
-from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+if TYPE_CHECKING:
+    from db.models import GuildConfig, PrayerSchedule
+
+
 def zone_for(name: str | None) -> ZoneInfo | None:
-    if not name or name.upper() in ("UTC", "ETC/UTC"):
+    if not name or name.upper() == "UTC":
         return None
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
         return None
 
-def scheduled_utc(schedule: Any, cfg: Any, on_date: date) -> datetime:
-    stored = getattr(schedule, "utc_offset_hours", None)
-    if stored is None:
-        stored = getattr(cfg, "timezone_offset_hours", 0.0) if cfg else 0.0
-    offset_hours = float(stored or 0.0)
-    local = datetime.combine(on_date, schedule.time_utc) + timedelta(hours=offset_hours)
+
+def scheduled_utc(schedule: "PrayerSchedule", cfg: "GuildConfig | None", on_date: date) -> datetime:
+    wall = datetime.combine(on_date, schedule.time_utc)
     zone = zone_for(getattr(cfg, "timezone_name", None) if cfg else None)
     if zone is None:
-        return local.replace(tzinfo=UTC)
-    return local.replace(tzinfo=zone).astimezone(UTC)
+        return wall.replace(tzinfo=UTC)
+    return wall.replace(tzinfo=zone).astimezone(UTC)
+
 
 def next_occurrence(
-    schedules: Iterable[Any], now: datetime, cfg: Any
-) -> tuple[datetime, Any] | None:
-    best: tuple[datetime, Any] | None = None
+    schedules: list["PrayerSchedule"], cfg: "GuildConfig | None", now: datetime
+) -> tuple["PrayerSchedule", datetime] | None:
+    zone = zone_for(getattr(cfg, "timezone_name", None) if cfg else None)
+    today = (now.astimezone(zone) if zone else now.astimezone(UTC)).date()
+
+    best: tuple["PrayerSchedule", datetime] | None = None
     for schedule in schedules:
-        if not getattr(schedule, "enabled", True):
+        if not schedule.enabled:
             continue
-        days_ahead = (schedule.day_of_week - now.weekday()) % 7
-        when = scheduled_utc(schedule, cfg, now.date() + timedelta(days=days_ahead))
-        if when <= now:
-            when = scheduled_utc(schedule, cfg, now.date() + timedelta(days=days_ahead + 7))
-        if best is None or when < best[0]:
-            best = (when, schedule)
+        days_ahead = (schedule.day_of_week - today.weekday()) % 7
+        candidate = scheduled_utc(schedule, cfg, today + timedelta(days=days_ahead))
+        if days_ahead == 0 and candidate <= now:
+            candidate = scheduled_utc(schedule, cfg, today + timedelta(days=7))
+        if best is None or candidate < best[1]:
+            best = (schedule, candidate)
     return best

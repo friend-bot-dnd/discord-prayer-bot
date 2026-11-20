@@ -108,25 +108,17 @@ def test_bearer_token_still_works(monkeypatch):
     assert verify_token(request)
 
 def test_prayer_time_follows_daylight_saving():
-    cfg = type("Cfg", (), {"timezone_name": "Europe/Berlin", "timezone_offset_hours": 1.0})()
-    schedule = type("S", (), {"time_utc": time(5, 0), "day_of_week": 0, "enabled": True})()
+    """A 06:00 wall-clock prayer stays 06:00 local on both sides of a DST change."""
+    cfg = type("Cfg", (), {"timezone_name": "Europe/Berlin"})()
+    schedule = type("S", (), {"time_utc": time(6, 0), "day_of_week": 0, "enabled": True})()
 
     winter = scheduled_utc(schedule, cfg, datetime(2025, 1, 15).date())
     summer = scheduled_utc(schedule, cfg, datetime(2025, 7, 15).date())
 
-    assert winter.hour == 5 and winter.tzinfo == UTC  # 06:00 CET
+    assert winter.hour == 5  # 06:00 CET
     assert summer.hour == 4  # 06:00 CEST
+    assert winter.tzinfo == UTC and summer.tzinfo == UTC
 
-def test_schedule_offset_beats_a_stale_guild_offset():
-    cfg = type("Cfg", (), {"timezone_name": "Europe/Berlin", "timezone_offset_hours": 0.0})()
-    schedule = type(
-        "S",
-        (),
-        {"time_utc": time(5, 0), "day_of_week": 0, "enabled": True, "utc_offset_hours": 1.0},
-    )()
-
-    assert scheduled_utc(schedule, cfg, datetime(2025, 1, 15).date()).hour == 5
-    assert scheduled_utc(schedule, cfg, datetime(2025, 7, 15).date()).hour == 4
 
 def test_next_occurrence_is_shared_and_skips_disabled():
     db = Database(":memory:")
@@ -134,7 +126,7 @@ def test_next_occurrence_is_shared_and_skips_disabled():
     upsert_schedule(db, "g", 3, PrayerType.JEWISH, time(9, 0), enabled=False)
 
     now = datetime(2025, 1, 6, 12, 0, tzinfo=UTC)  # Monday
-    when, schedule = next_occurrence(get_weekly_schedule(db, "g"), now, None)
+    schedule, when = next_occurrence(get_weekly_schedule(db, "g"), None, now)
 
     assert when.weekday() == 2 and when.hour == 9
     assert schedule.prayer_type == PrayerType.CHRISTIAN

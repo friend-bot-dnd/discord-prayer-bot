@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytz
 
-from bot.prayer_time import next_occurrence, scheduled_utc
+from bot.prayer_time import next_occurrence, scheduled_utc, zone_for
 from db.database import Database
 from db.models import PrayerType
 from db.prayers import get_audio_filename, get_guild_config, get_weekly_schedule, log_prayer_played
@@ -56,7 +56,7 @@ class PrayerScheduler:
         now = now or datetime.now(self.timezone)
         cfg = get_guild_config(self.db, self.guild_id)
         pre_join_mins = cfg.pre_join_minutes if cfg else 10
-        upcoming = next_occurrence(get_weekly_schedule(self.db, self.guild_id), now, cfg)
+        upcoming = next_occurrence(get_weekly_schedule(self.db, self.guild_id), cfg, now)
         if upcoming is None:
             return False
         return now < upcoming[0] <= now + timedelta(minutes=pre_join_mins)
@@ -89,13 +89,15 @@ class PrayerScheduler:
         now = datetime.now(self.timezone)
         if now.tzinfo is None:
             now = now.replace(tzinfo=UTC)
-        weekday = now.weekday()
-        today_str = now.date().isoformat()
+        cfg = get_guild_config(self.db, self.guild_id)
+        zone = zone_for(cfg.timezone_name if cfg else None)
+        local_today = (now.astimezone(zone) if zone else now).date()
+        weekday = local_today.weekday()
+        today_str = local_today.isoformat()
 
         self._pre_joined = {k for k in self._pre_joined if k.split(":")[0] >= today_str}
         self._played = {k for k in self._played if k.startswith(today_str)}
 
-        cfg = get_guild_config(self.db, self.guild_id)
         pre_join_mins = cfg.pre_join_minutes if cfg else 10
 
         for sched in get_weekly_schedule(self.db, self.guild_id):
@@ -103,7 +105,7 @@ class PrayerScheduler:
                 continue
 
             days_ahead = (sched.day_of_week - weekday) % 7
-            prayer_dt = scheduled_utc(sched, cfg, now.date() + timedelta(days=days_ahead))
+            prayer_dt = scheduled_utc(sched, cfg, local_today + timedelta(days=days_ahead))
 
             pre_key = (
                 f"{prayer_dt.date().isoformat()}:{sched.day_of_week}"

@@ -153,17 +153,24 @@ class PrayerBotVoiceMixin:
             return await self._reconnect_voice(guild_id)
 
         reconnect = _reconnect if has_listeners else None
+
+        async def _wait_for_keys(client):
+            # An empty room has no group to key yet; waiting only burns the timeout.
+            if has_listeners:
+                await ensure_voice_encryption_ready(client, reconnect=reconnect)
+            else:
+                log.debug("Guild %s: channel is empty — deferring the E2EE wait", guild_id)
+            return self.voice_connections.get(guild_id) or client
+
         if existing and existing.is_connected():
             if existing.channel and str(existing.channel.id) == str(cfg.voice_channel_id):
-                await ensure_voice_encryption_ready(existing, reconnect=reconnect)
-                existing = self.voice_connections.get(guild_id) or existing
+                existing = await _wait_for_keys(existing)
                 if not is_blip:
                     scoped_state = GuildScopedState(self.db, guild_id)
                     scoped_state.is_connected = True
                 return existing
             await existing.move_to(voice_channel)
-            await ensure_voice_encryption_ready(existing, reconnect=reconnect)
-            existing = self.voice_connections.get(guild_id) or existing
+            existing = await _wait_for_keys(existing)
             if not is_blip:
                 scoped_state = GuildScopedState(self.db, guild_id)
                 scoped_state.is_connected = True
@@ -184,8 +191,7 @@ class PrayerBotVoiceMixin:
             else:
                 return None
             self.voice_connections[guild_id] = vc
-            await ensure_voice_encryption_ready(vc, reconnect=reconnect)
-            vc = self.voice_connections.get(guild_id) or vc
+            vc = await _wait_for_keys(vc)
             log.info("Joined voice in guild %s for prayer", guild_id)
             if not is_blip:
                 scoped_state = GuildScopedState(self.db, guild_id)

@@ -570,10 +570,12 @@ def test_dashboard_play_track_forwards_with_opener():
 
         b = CmdBot()
         out = await b._handle_command("play_track", {"guild_id": "g", "track_id": "x.mp3", "prayer_type": "christian", "with_opener": False})
-        assert out == "ok:playing"
+        assert out == "ok:starting"  # Play Now must not block the command queue
+        await asyncio.sleep(0)
         assert seen["opener"] is False
         out2 = await b._handle_command("play_track", {"guild_id": "g", "track_id": "x.mp3", "prayer_type": "christian"})
-        assert out2 == "ok:playing"
+        assert out2 == "ok:starting"
+        await asyncio.sleep(0)
         assert seen["opener"] is True
     asyncio.run(run())
 

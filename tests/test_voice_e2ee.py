@@ -7,7 +7,6 @@ import pytest
 
 from bot.voice_e2ee import (
     ensure_voice_encryption_ready,
-    install_dave_transition_bridge,
     is_audible,
     missing_from_group,
     wait_until_audible,
@@ -216,6 +215,23 @@ def test_watchdog_restarts_the_prayer_when_encryption_is_lost() -> None:
 
     assert restarted and restarted[0][0][0] == "g"
 
+def test_watchdog_refuses_a_third_repair() -> None:
+    """The budget survives restarts: after two repairs the third is refused."""
+    restarted: list[tuple] = []
+    conn = SimpleNamespace(can_encrypt=False, dave_session=None, dave_protocol_version=0)
+    stub = _watchdog(conn, CHANNEL_WITH_LISTENER, restarted)
+    stub._e2ee_repairs = {"g": stub.E2EE_MAX_REPAIRS}
+
+    asyncio.run(stub._e2ee_watchdog("g", 1))
+
+    assert restarted == []
+
+def test_watchdog_repair_is_silent() -> None:
+    restarted: list[tuple] = []
+    conn = SimpleNamespace(can_encrypt=False, dave_session=None, dave_protocol_version=0)
+    asyncio.run(_watchdog(conn, CHANNEL_WITH_LISTENER, restarted)._e2ee_watchdog("g", 1))
+    assert restarted[0][1]["repair"] is True
+
 def test_watchdog_restarts_when_no_session_exists_at_all() -> None:
     restarted: list[tuple] = []
     conn = SimpleNamespace(can_encrypt=False, dave_session=None, dave_protocol_version=0)
@@ -351,58 +367,3 @@ def test_playback_starts_only_when_the_listener_is_inside_the_key_group() -> Non
     conn.can_encrypt = True
     live = SimpleNamespace(_connection=conn, channel=CHANNEL_WITH_LISTENER)
     assert asyncio.run(Stub()._wait_for_listeners_in_group("1", live)) is live
-
-def test_bridge_installs_the_new_epoch_keys_before_acking() -> None:
-    install_dave_transition_bridge()
-    from discord.gateway import DiscordVoiceWebSocket
-
-    session = FakeSession()
-    state = SimpleNamespace(dave_session=session, dave_pending_transitions={7: 1})
-    sent: list[dict] = []
-
-    class Socket:
-        _connection = state
-
-        async def send_as_json(self, payload):
-            sent.append(payload)
-
-    asyncio.run(DiscordVoiceWebSocket.send_transition_ready(Socket(), 7))
-
-    assert ("prepare", 7, 1) in session.calls
-    assert sent[0]["d"] == {"transition_id": 7}
-
-def test_bridge_executes_the_transition_on_the_dave_session() -> None:
-    install_dave_transition_bridge()
-    from discord.voice_state import VoiceConnectionState
-
-    session = FakeSession()
-    state = SimpleNamespace(
-        dave_session=session,
-        dave_pending_transitions={5: 1},
-        dave_protocol_version=1,
-        dave_downgraded=False,
-    )
-    asyncio.run(VoiceConnectionState._execute_transition(state, 5))
-
-    assert session.calls == [("execute", 5)]
-
-def test_bridge_reinstalls_keys_when_a_group_reforms_with_transition_zero() -> None:
-    install_dave_transition_bridge()
-    from discord.gateway import DiscordVoiceWebSocket
-
-    session = FakeSession()
-    session.process_welcome = lambda *_args: None
-    state = SimpleNamespace(
-        dave_session=session, dave_pending_transitions={}, dave_protocol_version=1
-    )
-
-    class Socket:
-        _connection = state
-
-        def __getattr__(self, name: str):
-            return getattr(DiscordVoiceWebSocket, name)
-
-    frame = b"\x00\x00" + bytes([DiscordVoiceWebSocket.MLS_WELCOME]) + b"\x00\x00welcome"
-    asyncio.run(DiscordVoiceWebSocket.received_binary_message(Socket(), frame))
-
-    assert session.calls == [("prepare", 0, 1)]
