@@ -406,3 +406,102 @@ def test_dissolved_group_is_not_audible_even_though_it_can_encrypt() -> None:
     vc = SimpleNamespace(_connection=conn, channel=CHANNEL_WITH_LISTENER)
 
     assert is_audible(vc, [1]) is False
+
+def test_listener_rejoining_does_not_reconnect_the_bot(monkeypatch) -> None:
+    from bot import prayer_bot_playback as pb
+
+    cfg = SimpleNamespace(voice_channel_id="111", text_channel_id=None, pre_join_minutes=10)
+    monkeypatch.setattr(pb, "get_guild_config", lambda *_a, **_k: cfg)
+    monkeypatch.setattr(pb, "log_voice_join", lambda *_a: None)
+    monkeypatch.setattr(pb, "log_voice_leave", lambda *_a: None)
+
+    session = FakeSession()
+    session.user_ids = [1]  # the listener is not in the key group yet
+    conn = FakeConn(session)
+    conn.can_encrypt = True
+    channel = SimpleNamespace(id="111", members=[SimpleNamespace(bot=False, id=42)])
+    vc = SimpleNamespace(_connection=conn, channel=channel, id="111", is_connected=lambda: True)
+
+    class FakePlayer:
+        current_track = object()
+        state = SimpleNamespace(is_paused=True)
+        started: list[str] = []
+
+        def __init__(self) -> None:
+            self.voice_client = vc
+
+        def is_playing(self) -> bool:
+            return False
+
+        async def resume(self) -> None:
+            self.started.append("resume")
+
+    player = FakePlayer()
+
+    async def banned_reconnect(guild_id: str):
+        raise AssertionError("a rejoining listener must not reconnect the bot")
+
+    class Stub(pb.PrayerBotPlaybackMixin):
+        db = None
+        players = {"1": player}
+        voice_connections = {"1": vc}
+        _tts_playing: set[str] = set()
+        _disconnect_tasks: dict = {}
+        _pending_joiners: dict = {}
+        _reconnect_voice = staticmethod(banned_reconnect)
+
+        async def _ensure_voice_connected(self, guild_id: str, is_blip: bool = False):
+            return vc
+
+        def _cancel_disconnect_task(self, guild_id: str) -> None:
+            return None
+
+        def _get_listening_channel(self, guild_id: str):
+            return channel
+
+        def _get_next_prayer_minutes(self, guild_id: str):
+            return None
+
+    member = SimpleNamespace(
+        bot=False, id=42, name="lak", display_name="lak", guild=SimpleNamespace(id=1)
+    )
+
+    async def run() -> None:
+        async def add_to_group() -> None:
+            await asyncio.sleep(0.05)
+            session.user_ids = [1, 42]
+
+        task = asyncio.create_task(add_to_group())
+        await Stub().on_voice_state_update(member, SimpleNamespace(channel=None), SimpleNamespace(channel=channel))
+        await task
+
+    asyncio.run(run())
+
+    assert player.started == ["resume"]
+    assert player.voice_client is vc
+
+def test_playback_refuses_to_start_when_voice_is_not_encrypting() -> None:
+    from bot.prayer_bot_playback import PrayerBotPlaybackMixin
+
+    conn = FakeConn(FakeSession())  # pending session, cannot encrypt yet
+    vc = SimpleNamespace(_connection=conn, channel=CHANNEL_WITH_LISTENER)
+
+    class Stub(PrayerBotPlaybackMixin):
+        AUDIBILITY_WAIT_SECONDS = 0.15
+
+    assert asyncio.run(Stub()._wait_for_listeners_in_group("1", vc)) is False
+
+
+def test_playback_starts_once_the_listener_is_inside_the_key_group() -> None:
+    from bot.prayer_bot_playback import PrayerBotPlaybackMixin
+
+    session = FakeSession()
+    session.user_ids = [1]
+    conn = FakeConn(session)
+    conn.can_encrypt = True
+    vc = SimpleNamespace(_connection=conn, channel=CHANNEL_WITH_LISTENER)
+
+    class Stub(PrayerBotPlaybackMixin):
+        AUDIBILITY_WAIT_SECONDS = 0.15
+
+    assert asyncio.run(Stub()._wait_for_listeners_in_group("1", vc)) is True

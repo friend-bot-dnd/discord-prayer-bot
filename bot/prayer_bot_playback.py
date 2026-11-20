@@ -208,17 +208,21 @@ class PrayerBotPlaybackMixin:
         cb = self._make_schedule_disconnect(guild_id)
         await cb(player, track)
 
+    AUDIBILITY_WAIT_SECONDS = 60.0
+
     async def _wait_for_listeners_in_group(self, guild_id: str, vc) -> bool:
         listeners = await wait_for_listener(vc, LISTENER_WAIT_SECONDS)
         if not listeners:
             log.warning("Nobody joined guild %s in %ss — prayer skipped", guild_id, int(LISTENER_WAIT_SECONDS))
             return False
-        if not await wait_until_audible(vc, listeners):
-            log.warning(
-                "Starting playback in guild %s with listeners outside the E2EE group",
-                guild_id,
-            )
-        return True
+        if await wait_until_audible(vc, listeners, timeout=self.AUDIBILITY_WAIT_SECONDS):
+            return True
+        log.error(
+            "Voice is not encrypting in guild %s — refusing to play, listeners outside the key group: %s",
+            guild_id,
+            missing_from_group(vc, listeners),
+        )
+        return False
 
     E2EE_WATCH_INTERVAL = 5.0
     E2EE_MAX_REPAIRS = 2
@@ -494,11 +498,9 @@ class PrayerBotPlaybackMixin:
         elif listener_count > 0 and not player.is_playing() and player.current_track is not None:
             if player.state.is_paused:
                 self._cancel_disconnect_task(guild_id)
-                vc = await self._ensure_voice_connected(guild_id)
+                vc = self.voice_connections.get(guild_id)
                 listeners_ids = [m.id for m in listeners]
-                if vc is not None and not is_audible(vc, listeners_ids):
-                    vc = await self._reconnect_voice(guild_id)
-                if vc:
+                if vc is not None and vc.is_connected():
                     player.voice_client = vc
                     await wait_until_audible(vc, listeners_ids)
                     await player.resume()
