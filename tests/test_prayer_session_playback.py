@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,12 @@ from bot.prayer_session import session_plan
 from bot.prayer_scheduler import WATCHDOG_MAX_WINDOW_SECONDS
 from db.database import Database
 from db.models import PrayerType, PRAYER_AUDIO_MAP
+
+async def _drain(bot):
+    for task in list(bot._session_tasks.values()):
+        with contextlib.suppress(Exception):
+            task.cancel()
+            await asyncio.sleep(0)
 
 class FakeSession:
 
@@ -244,10 +251,7 @@ def test_is_prayer_playing_true_during_gap():
             assert player.is_playing() is False
             assert bot._is_prayer_playing("g1") is True
             bot._cancel_session("g1")
-            for t in list(bot._session_tasks.values()):
-                with __import__("contextlib").suppress(Exception):
-                    t.cancel()
-            await asyncio.sleep(0)
+            await _drain(bot)
             assert bot._is_prayer_playing("g1") is False
         finally:
             pb.INTER_SECTION_PAUSE_SECONDS = orig
@@ -271,10 +275,7 @@ def test_watchdog_noop_during_inter_section_pause():
             scheduler.is_voice_connected = lambda gid: True
             assert scheduler.is_prayer_playing("g1") is True
             bot._cancel_session("g1")
-            for t in list(bot._session_tasks.values()):
-                with __import__("contextlib").suppress(Exception):
-                    t.cancel()
-                await asyncio.sleep(0)
+            await _drain(bot)
         finally:
             pb.INTER_SECTION_PAUSE_SECONDS = orig
     asyncio.run(run())
@@ -326,10 +327,7 @@ def test_second_start_cancels_first_session():
             assert len(player.starts) == 2  # second session's opener restarted
             assert player.starts[1].local_path.endswith("The three daily prayers - DND community.mp3")
             bot._cancel_session("g1")
-            for t in list(bot._session_tasks.values()):
-                with __import__("contextlib").suppress(Exception):
-                    t.cancel()
-            await asyncio.sleep(0)
+            await _drain(bot)
         finally:
             pb.INTER_SECTION_PAUSE_SECONDS = orig
     asyncio.run(run())
@@ -380,10 +378,7 @@ def test_sessions_are_guild_isolated():
             assert len(p2.starts) == 1
             bot._cancel_session("g2")
             p2._playing = False
-            for t in list(bot._session_tasks.values()):
-                with __import__("contextlib").suppress(Exception):
-                    t.cancel()
-            await asyncio.sleep(0)
+            await _drain(bot)
         finally:
             pb.INTER_SECTION_PAUSE_SECONDS = orig
     asyncio.run(run())
@@ -402,10 +397,7 @@ def test_runner_advances_when_finish_callback_lost():
             await asyncio.sleep(2.8)
             assert len(player.starts) == 2
             bot._cancel_session("g1")
-            for t in list(bot._session_tasks.values()):
-                with __import__("contextlib").suppress(Exception):
-                    t.cancel()
-            await asyncio.sleep(0)
+            await _drain(bot)
         finally:
             pb.INTER_SECTION_PAUSE_SECONDS = orig_pause
     asyncio.run(run())
@@ -444,10 +436,7 @@ def test_runner_does_not_double_advance():
             await asyncio.sleep(0.3)
             assert len(player.starts) == 2
             bot._cancel_session("g1")
-            for t in list(bot._session_tasks.values()):
-                with __import__("contextlib").suppress(Exception):
-                    t.cancel()
-            await asyncio.sleep(0)
+            await _drain(bot)
         finally:
             pb.INTER_SECTION_PAUSE_SECONDS = orig
     asyncio.run(run())
@@ -468,10 +457,7 @@ def test_pause_mid_track_does_not_advance_step():
             ok = await asyncio.wait_for(bot._await_step_finished("g1", bot._session_gen["g1"]), timeout=4)
             assert ok is False  # timed out, did not advance
             bot._cancel_session("g1")
-            for t in list(bot._session_tasks.values()):
-                with __import__("contextlib").suppress(Exception):
-                    t.cancel()
-            await asyncio.sleep(0)
+            await _drain(bot)
         finally:
             pb.INTER_SECTION_PAUSE_SECONDS = orig_pause
             pb.SESSION_MAX_STEP_SECONDS = orig_max
@@ -493,10 +479,7 @@ def test_volume_change_mid_session_does_not_break_runner():
             await asyncio.sleep(0.3)
             assert len(player.starts) == 2
             bot._cancel_session("g1")
-            for t in list(bot._session_tasks.values()):
-                with __import__("contextlib").suppress(Exception):
-                    t.cancel()
-            await asyncio.sleep(0)
+            await _drain(bot)
         finally:
             pb.INTER_SECTION_PAUSE_SECONDS = orig
     asyncio.run(run())
@@ -610,10 +593,7 @@ def test_no_disconnect_task_between_tracks():
             assert len(bot.cancel_disconnect_calls) > n_cancel_before
             assert len(bot.epilogue_calls) == 0 or len(player.starts) == 2
             bot._cancel_session("g1")
-            for t in list(bot._session_tasks.values()):
-                with __import__("contextlib").suppress(Exception):
-                    t.cancel()
-            await asyncio.sleep(0)
+            await _drain(bot)
         finally:
             pb.INTER_SECTION_PAUSE_SECONDS = orig
     asyncio.run(run())
@@ -633,10 +613,7 @@ def test_listen_sessions_stay_open_across_tracks():
             assert bot._is_prayer_playing("g1") is True
             assert len(bot.epilogue_calls) == 0  # close_guild_sessions not yet called
             bot._cancel_session("g1")
-            for t in list(bot._session_tasks.values()):
-                with __import__("contextlib").suppress(Exception):
-                    t.cancel()
-            await asyncio.sleep(0)
+            await _drain(bot)
         finally:
             pb.INTER_SECTION_PAUSE_SECONDS = orig
     asyncio.run(run())
@@ -675,10 +652,7 @@ def test_tts_queue_drained_before_second_track():
             await asyncio.sleep(0.3)
             assert "g1" in bot.stop_tts_calls  # drained before step 2
             bot._cancel_session("g1")
-            for t in list(bot._session_tasks.values()):
-                with __import__("contextlib").suppress(Exception):
-                    t.cancel()
-            await asyncio.sleep(0)
+            await _drain(bot)
         finally:
             pb.INTER_SECTION_PAUSE_SECONDS = orig
     asyncio.run(run())

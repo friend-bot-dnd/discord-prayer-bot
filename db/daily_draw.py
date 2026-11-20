@@ -106,23 +106,6 @@ def set_channel_id(db: Database, guild_id: str, channel_id: str) -> None:
     get_or_seed_config(db, guild_id)
     db.execute("UPDATE daily_draw_config SET channel_id = ? WHERE guild_id = ?", (channel_id, guild_id))
 
-def set_role_id(db: Database, guild_id: str, role_id: str) -> None:
-    get_or_seed_config(db, guild_id)
-    db.execute("UPDATE daily_draw_config SET target_role_id = ? WHERE guild_id = ?", (role_id, guild_id))
-
-def set_cooldown_hours(db: Database, guild_id: str, cooldown_hours: int) -> None:
-    get_or_seed_config(db, guild_id)
-    db.execute("UPDATE daily_draw_config SET cooldown_hours = ? WHERE guild_id = ?", (int(cooldown_hours), guild_id))
-
-def get_active_message(db: Database, guild_id: str) -> tuple[str | None, str | None, int]:
-    row = db.fetchone(
-        "SELECT active_message_id, active_post_local_date, heart_count FROM daily_draw_state WHERE guild_id = ?",
-        (guild_id,),
-    )
-    if row is None:
-        return (None, None, 0)
-    return (row["active_message_id"], row["active_post_local_date"], int(row["heart_count"]))
-
 def update_hearts(db: Database, guild_id: str, new_count: int) -> None:
     db.execute(
         """
@@ -211,20 +194,6 @@ def get_archive(db: Database, guild_id: str) -> tuple[str | None, bool]:
     flag = row["archive_button_removed"]
     removed = bool(flag) if flag is not None else False
     return (row["archive_message_id"], removed)
-
-def start_new_day(db: Database, guild_id: str, message_id: str, post_date: str) -> None:
-    db.execute(
-        """
-        INSERT INTO daily_draw_state
-            (guild_id, active_message_id, active_post_local_date, heart_count)
-        VALUES (?, ?, ?, 0)
-        ON CONFLICT(guild_id) DO UPDATE SET
-            active_message_id = excluded.active_message_id,
-            active_post_local_date = excluded.active_post_local_date,
-            heart_count = 0
-        """,
-        (guild_id, message_id, post_date),
-    )
 
 def _to_naive_utc(utc_dt: datetime) -> datetime:
     if utc_dt.tzinfo is not None:

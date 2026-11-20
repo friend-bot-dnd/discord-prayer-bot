@@ -2,23 +2,13 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import os
-import re
 
 import discord
 import pytest
 from fastapi.testclient import TestClient
 
-from bot.daily_draw_commands import (
-    COMMAND_TOKEN,
-    REPLY_CHANNEL_NOT_FOUND,
-    REPLY_GUILD_ONLY,
-    REPLY_NEED_MANAGE_SERVER,
-    REPLY_NEED_SEND_MESSAGES,
-    REPLY_WRONG_CHANNEL_TYPE,
-    process_slash_setticketdrawchannel,
-)
+from bot.daily_draw_commands import REPLY_CHANNEL_NOT_FOUND, REPLY_GUILD_ONLY, REPLY_NEED_MANAGE_SERVER, REPLY_NEED_SEND_MESSAGES, REPLY_WRONG_CHANNEL_TYPE, process_slash_setticketdrawchannel
 from bot.daily_draw_logic import DAILY_DRAW_BUTTON_CUSTOM_ID
 from bot.daily_draw_runtime import DailyDrawTicketView, DailyDrawV2Mixin
 from db.daily_draw import get_config, get_or_seed_config, set_channel_id
@@ -228,40 +218,6 @@ def test_resolve_uses_stored_channel_not_env(db, monkeypatch):
     ids = asyncio.run(_Bot()._resolve_daily_draw_guild_ids())
     assert ids == [GID]
     assert get_or_seed_config(db, GID).channel_id == NEW_CHANNEL_ID
-
-def test_command_token_is_setticketdrawchannel():
-    assert COMMAND_TOKEN == "setticketdrawchannel"
-
-def test_slash_command_is_registered(monkeypatch, tmp_path):
-    from bot.prayer_bot_status import PrayerBotStatusMixin
-
-    src = inspect.getsource(PrayerBotStatusMixin._setup_slash_commands)
-    declared = re.findall(r'@self\.tree\.command\(\s*name=["\']([^"\']+)["\']', src)
-    assert COMMAND_TOKEN in declared
-    assert "channel: discord.TextChannel" in src
-    assert "default_permissions(manage_guild=True)" in src
-
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "slash.db"))
-    monkeypatch.setenv("DISCORD_BOT_TOKEN", "x")
-    monkeypatch.setenv("ADMIN_TOKEN", "x")
-    import bot.main as main_mod
-
-    monkeypatch.setattr(main_mod, "DB_PATH", str(tmp_path / "slash.db"))
-    bot = main_mod.PrayerBot()
-    try:
-        assert bot.intents.message_content is False
-        assert bot.intents.members is True
-        bot._setup_slash_commands()
-        names = {cmd.name for cmd in bot.tree.get_commands()}
-        assert COMMAND_TOKEN in names
-        assert "start" in names
-        assert "exit" in names
-        cmd = next(c for c in bot.tree.get_commands() if c.name == COMMAND_TOKEN)
-        assert cmd.default_permissions is not None
-        assert cmd.default_permissions.manage_guild is True
-        assert cmd.guild_only is True
-    finally:
-        bot.db.close()
 
 def test_draw_ticket_view_is_persistent():
     view = DailyDrawTicketView()

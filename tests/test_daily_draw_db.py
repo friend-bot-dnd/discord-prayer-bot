@@ -6,25 +6,7 @@ from datetime import timezone as dt_timezone
 
 import pytest
 
-from bot.daily_draw_logic import is_daily_post_due
-from db.daily_draw import (
-    DEFAULT_CHANNEL_ID,
-    DEFAULT_COOLDOWN_HOURS,
-    DEFAULT_POST_HOUR,
-    DEFAULT_ROLE_ID,
-    DEFAULT_TIMEZONE,
-    DailyDrawConfig,
-    get_active_message,
-    get_or_seed_config,
-    last_draw_at,
-    repoint_active_message,
-    set_channel_id,
-    set_cooldown_hours,
-    set_last_draw,
-    set_role_id,
-    start_new_day,
-    update_hearts,
-)
+from db.daily_draw import DEFAULT_CHANNEL_ID, DEFAULT_COOLDOWN_HOURS, DEFAULT_POST_HOUR, DEFAULT_ROLE_ID, DEFAULT_TIMEZONE, DailyDrawConfig, get_or_seed_config, last_draw_at, set_last_draw
 from db.database import Database
 
 GID = "1234567890"
@@ -87,45 +69,6 @@ def test_seed_reads_env_once(db, monkeypatch):
         assert cfg2.cooldown_hours == 18
         assert cfg2.post_hour == 7
 
-def test_setters(db):
-    get_or_seed_config(db, GID)
-    set_channel_id(db, GID, "111")
-    set_role_id(db, GID, "222")
-    set_cooldown_hours(db, GID, 6)
-    cfg = get_or_seed_config(db, GID)
-    assert (cfg.channel_id, cfg.target_role_id, cfg.cooldown_hours) == ("111", "222", 6)
-
-def test_setters_work_before_first_seed(db):
-    set_role_id(db, GID, "222")
-    assert get_or_seed_config(db, GID).target_role_id == "222"
-
-def test_active_message_empty_at_first(db):
-    assert get_active_message(db, GID) == (None, None, 0)
-
-def test_start_new_day_and_update_hearts(db):
-    start_new_day(db, GID, "555", "2026-07-20")
-    assert get_active_message(db, GID) == ("555", "2026-07-20", 0)
-
-    update_hearts(db, GID, 1)
-    update_hearts(db, GID, 2)
-    assert get_active_message(db, GID) == ("555", "2026-07-20", 2)
-
-    start_new_day(db, GID, "666", "2026-07-21")
-    assert get_active_message(db, GID) == ("666", "2026-07-21", 0)
-
-def test_update_hearts_without_state_row(db):
-    update_hearts(db, GID, 3)
-    assert get_active_message(db, GID) == (None, None, 3)
-
-def test_repoint_preserves_hearts_and_date(db):
-    start_new_day(db, GID, "555", "2026-07-20")
-    update_hearts(db, GID, 2)
-    repoint_active_message(db, GID, "777")
-    assert get_active_message(db, GID) == ("777", "2026-07-20", 2)
-
-    repoint_active_message(db, "999", "888")
-    assert get_active_message(db, "999") == ("888", None, 0)
-
 def test_last_draw_roundtrip_naive_utc(db):
     assert last_draw_at(db, GID, "u1") is None
 
@@ -145,13 +88,3 @@ def _paris(y, m, d, hh, mm=0):
 
     return pytz.timezone("Europe/Paris").localize(datetime(y, m, d, hh, mm))
 
-def test_due_rule_never_posted():
-    assert is_daily_post_due(_paris(2026, 3, 10, 6, 59), 7, None) is True
-
-def test_due_rule_waits_for_post_hour():
-    assert is_daily_post_due(_paris(2026, 3, 10, 6, 59), 7, "2026-03-09") is False
-    assert is_daily_post_due(_paris(2026, 3, 10, 7, 0), 7, "2026-03-09") is True
-    assert is_daily_post_due(_paris(2026, 3, 10, 9, 30), 7, "2026-03-09") is True
-
-def test_due_rule_no_double_post_same_day():
-    assert is_daily_post_due(_paris(2026, 3, 10, 9, 30), 7, "2026-03-10") is False

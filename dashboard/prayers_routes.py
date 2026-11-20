@@ -108,10 +108,10 @@ async def login_page(request: Request):
 <!DOCTYPE html>
 <html><head><title>Login — Prayer Bot</title>
 <style>
-body { font-family: sans-serif; margin: 80px auto; max-width: 400px; background: #f9f9f9; }
-form { background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-input { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 4px; }
-button { background: #2c3e50; color: #fff; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }
+body{font-family:sans-serif;margin:80px auto;max-width:400px;background:#f9f9f9}
+form{background:#fff;padding:24px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+input{width:100%;padding:10px;margin:8px 0;border:1px solid #ccc;border-radius:4px}
+button{background:#2c3e50;color:#fff;border:0;padding:10px 20px;border-radius:4px;cursor:pointer}
 </style></head><body>
 <h2>Admin Login</h2>
 <form method="post" action="/login">

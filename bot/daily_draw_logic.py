@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime, time, timedelta, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 DAILY_DRAW_BASE_TEXT = (
     "Pray for a friend today, or simply hold them in mind with love and kindness."
@@ -17,7 +16,6 @@ DAILY_DRAW_CHANNEL_ENV = "PRAYER_DRAW_CHANNEL_ID"
 DAILY_DRAW_ROLE_ENV = "PRAYER_DRAW_ROLE_ID"
 DAILY_DRAW_COOLDOWN_ENV = "PRAYER_DRAW_COOLDOWN_HOURS"
 DAILY_DRAW_POST_HOUR_ENV = "PRAYER_DRAW_POST_HOUR"
-DAILY_DRAW_LOG_PATH_ENV = "PRAYER_DRAW_LOG_PATH"
 DAILY_DRAW_TIMEZONE_ENV = "DAILY_DRAW_TIMEZONE"
 
 DEFAULT_COOLDOWN_HOURS = 18
@@ -30,9 +28,6 @@ def build_message_text(base_text: str, heart_count: int) -> str:
     if heart_count <= 0:
         return base_text
     return f"{base_text} {DAILY_DRAW_HEART_GLYPH * heart_count}"
-
-def mention_for(user_id) -> str:
-    return f"<@{user_id}>"
 
 def _as_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
@@ -118,27 +113,3 @@ def append_draw_log(
         fh.write(line + "\n")
         fh.flush()
 
-def is_daily_post_due(
-    now_local: datetime, post_hour: int, last_post_local_date: str | None
-) -> bool:
-    if last_post_local_date is None:
-        return True
-    today_local = now_local.date().isoformat()
-    if today_local <= last_post_local_date:
-        return False
-    return now_local.time() >= time(post_hour, 0)
-
-def paris_local_date(now_utc: datetime, tz_name: str = DEFAULT_TIMEZONE_NAME):
-    return _as_utc(now_utc).astimezone(ZoneInfo(tz_name)).date()
-
-def seconds_until_next_post(
-    now_utc: datetime,
-    post_hour: int = DEFAULT_POST_HOUR,
-    tz_name: str = DEFAULT_TIMEZONE_NAME,
-) -> float:
-    tz = ZoneInfo(tz_name)
-    now_local = _as_utc(now_utc).astimezone(tz)
-    target = now_local.replace(hour=post_hour, minute=0, second=0, microsecond=0)
-    if target <= now_local:
-        target += timedelta(days=1)
-    return (target - now_local).total_seconds()

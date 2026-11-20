@@ -7,23 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from bot.daily_draw_logic import (
-    DAILY_DRAW_BASE_TEXT,
-    DAILY_DRAW_BUTTON_CUSTOM_ID,
-    DAILY_DRAW_CATPRAY_EMOJI_ID,
-    DAILY_DRAW_HEART_GLYPH,
-    append_draw_log,
-    build_message_text,
-    cooldown_remaining,
-    eligible_draw_pool,
-    format_draw_log_line,
-    format_remaining,
-    is_daily_post_due,
-    is_on_cooldown,
-    paris_local_date,
-    pick_target,
-    seconds_until_next_post,
-)
+from bot.daily_draw_logic import DAILY_DRAW_BASE_TEXT, DAILY_DRAW_BUTTON_CUSTOM_ID, DAILY_DRAW_CATPRAY_EMOJI_ID, DAILY_DRAW_HEART_GLYPH, append_draw_log, build_message_text, cooldown_remaining, eligible_draw_pool, format_draw_log_line, format_remaining, is_on_cooldown, pick_target
 
 def test_build_message_text_zero_hearts_is_base_text():
     assert build_message_text(DAILY_DRAW_BASE_TEXT, 0) == DAILY_DRAW_BASE_TEXT
@@ -171,36 +155,3 @@ def test_append_draw_log_default_timestamp_now_utc(tmp_path: Path):
 
 PARIS = "Europe/Paris"
 
-def test_is_daily_post_due_never_posted():
-    now_local = datetime(2026, 9, 8, 7, 0, tzinfo=None)
-    assert is_daily_post_due(now_local, 7, None)
-
-def test_is_daily_post_due_same_day_not_due():
-    now_local = datetime(2026, 9, 8, 8, 0)
-    assert not is_daily_post_due(now_local, 7, "2026-09-08")
-
-def test_is_daily_post_due_next_day_after_hour():
-    now_local = datetime(2026, 9, 9, 7, 0)
-    assert is_daily_post_due(now_local, 7, "2026-09-08")
-
-def test_is_daily_post_due_next_day_before_hour():
-    now_local = datetime(2026, 9, 9, 6, 59)
-    assert not is_daily_post_due(now_local, 7, "2026-09-08")
-
-def test_is_daily_post_due_exact_hour():
-    now_local = datetime(2026, 9, 9, 7, 0)
-    assert is_daily_post_due(now_local, 7, "2026-09-08")
-
-def test_paris_local_date_dst_spring_gap():
-    now_utc = datetime(2026, 3, 29, 1, 0, tzinfo=timezone.utc)
-    assert paris_local_date(now_utc, PARIS).isoformat() == "2026-03-29"
-
-def test_seconds_until_next_post_basic():
-    now_utc = datetime(2026, 9, 8, 5, 0, tzinfo=timezone.utc)  # 07:00 Paris
-    secs = seconds_until_next_post(now_utc, 7, PARIS)
-    assert secs == pytest.approx(24 * 3600)
-
-def test_seconds_until_next_post_before_post_hour():
-    now_utc = datetime(2026, 9, 8, 4, 0, tzinfo=timezone.utc)  # 06:00 Paris
-    secs = seconds_until_next_post(now_utc, 7, PARIS)
-    assert secs == pytest.approx(3600)

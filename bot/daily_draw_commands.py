@@ -8,8 +8,6 @@ import discord
 from db.daily_draw import set_channel_id
 from db.database import Database
 
-COMMAND_TOKEN = "setticketdrawchannel"
-
 REPLY_NEED_MANAGE_SERVER = "You need Manage Server to do that."
 REPLY_NEED_CHANNEL = "Provide a text channel."
 REPLY_CHANNEL_NOT_FOUND = "Channel not found in this guild."

@@ -7,9 +7,6 @@ from typing import List
 from db.database import Database
 from db.models import PrayerSchedule, PrayerType, PRAYER_AUDIO_MAP
 
-def create_prayer_tables(db: Database) -> None:
-    pass
-
 def get_weekly_schedule(db: Database, guild_id: str) -> List[PrayerSchedule]:
     rows = db.fetchall("""
         SELECT id, guild_id, day_of_week, prayer_type, time_utc, enabled, created_at, utc_offset_hours
@@ -62,9 +59,6 @@ def update_schedule(
         SET time_utc = ?, enabled = ?, utc_offset_hours = COALESCE(?, utc_offset_hours)
         WHERE id = ?
     """, (t_utc.isoformat(), int(enabled), offset_hours, schedule_id))
-
-def delete_schedule(db: Database, schedule_id: int) -> None:
-    db.execute("DELETE FROM prayer_schedules WHERE id = ?", (schedule_id,))
 
 def log_prayer_played(
     db: Database, guild_id: str, schedule_id: int | None, prayer_type: PrayerType, success: bool

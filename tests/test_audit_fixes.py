@@ -81,7 +81,8 @@ def test_session_cookie_does_not_contain_the_token(monkeypatch):
 
     assert "a-real-secret" not in cookie
     assert session_is_valid(cookie)
-    assert not session_is_valid(cookie[:-1] + "0")
+    tampered = cookie[:-1] + ("0" if cookie[-1] != "0" else "1")
+    assert not session_is_valid(tampered)
     assert not session_is_valid("v1.1.deadbeef")
     assert not session_is_valid(None)
 

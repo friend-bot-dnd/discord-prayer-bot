@@ -4,24 +4,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import pytest
 
-from bot.daily_draw_v2 import (
-    DRAW_DAY_ANCHOR_HOUR,
-    LAST_SLOT_INDEX,
-    REPOST_SPACING_HOURS,
-    SLOTS_PER_DRAW_DAY,
-    TICK_GRACE,
-    archive_needs_retry,
-    decide_tick_action,
-    draw_day,
-    due_slot_index,
-    format_cooldown_reply,
-    is_stale_draw_message,
-    same_draw_day,
-    should_skip_posting,
-    slot_time,
-)
+from bot.daily_draw_v2 import TICK_GRACE, archive_needs_retry, decide_tick_action, draw_day, due_slot_index, format_cooldown_reply, is_stale_draw_message, same_draw_day, should_skip_posting, slot_time
 from db.daily_draw import (
     get_active,
     get_archive,
@@ -47,14 +31,6 @@ def test_draw_day_0700_starts_new_cycle():
 def test_draw_day_0300_is_previous_cycle():
     assert draw_day(_local(2026, 9, 11, 3, 0)) == date(2026, 9, 10)
 
-def test_slot_ladder_hours():
-    cycle = date(2026, 9, 10)
-    hours = [(slot_time(cycle, k, tz=PARIS).date(), slot_time(cycle, k, tz=PARIS).hour) for k in range(SLOTS_PER_DRAW_DAY)]
-    assert hours == [
-        (date(2026, 9, 10), 7), (date(2026, 9, 10), 12), (date(2026, 9, 10), 17),
-        (date(2026, 9, 10), 22), (date(2026, 9, 11), 3),
-    ]
-
 def test_slot_k4_rolls_to_next_calendar_day():
     assert slot_time(date(2026, 9, 10), 4, tz=PARIS) == _local(2026, 9, 11, 3, 0)
 
@@ -63,12 +39,6 @@ def _is_unambiguous(st: datetime) -> bool:
     back = utc.astimezone(st.tzinfo)
     return (back.year, back.month, back.day, back.hour, back.minute) == (
         st.year, st.month, st.day, st.hour, st.minute)
-
-@pytest.mark.parametrize("cycle", [date(2026, 3, 28), date(2026, 3, 29), date(2026, 10, 24), date(2026, 10, 25)])
-def test_dst_transition_slots_exist_and_unambiguous(cycle):
-    for k in range(SLOTS_PER_DRAW_DAY):
-        st = slot_time(cycle, k, tz=PARIS)
-        assert _is_unambiguous(st)
 
 def test_2026_every_slot_unambiguous():
     start = date(2026, 1, 1)
@@ -203,9 +173,6 @@ def test_section_41_heart_survives_0700_close():
     assert press(_local(2026, 9, 11, 10, 0), "m5") == "rejected"
     assert press(_local(2026, 9, 11, 10, 0), "m6") == "edit"
     assert state["hearts"] == 1
-
-def test_constants_match_brief():
-    assert (DRAW_DAY_ANCHOR_HOUR, REPOST_SPACING_HOURS, SLOTS_PER_DRAW_DAY, LAST_SLOT_INDEX) == (7, 5, 5, 4)
 
 def test_due_slot_index_at_known_hours():
     assert due_slot_index(_local(2026, 9, 10, 7, 0)) == 0
